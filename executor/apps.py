@@ -249,10 +249,7 @@ def is_running(name: str) -> bool:
     canonical = resolve_alias(name)
     entry = APP_REGISTRY.get(canonical)
     targets = {proc.lower() for proc in (entry[2] if entry else ())} | {f"{canonical}.exe"}
-    for process in psutil.process_iter(["name"]):
-        if (process.info.get("name") or "").lower() in targets:
-            return True
-    return False
+    return any((process.info.get("name") or "").lower() in targets for process in psutil.process_iter(["name"]))
 
 
 def known_apps() -> list[str]:

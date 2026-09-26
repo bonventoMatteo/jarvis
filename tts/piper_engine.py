@@ -38,6 +38,15 @@ _PRONUNCIATION = (
 )
 
 
+#: Presets de "emoção": multiplicadores sobre (length_scale, noise_scale).
+MOODS: dict[str, tuple[float, float]] = {
+    "neutral": (1.00, 1.00),
+    "calm": (1.10, 0.75),
+    "urgent": (0.90, 1.12),
+    "confirm": (0.96, 0.90),
+}
+
+
 def normalize_text(text: str) -> str:
     """Limpa markdown e expande siglas antes de sintetizar."""
     text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
@@ -61,6 +70,7 @@ class PiperEngine:
         self._lock = asyncio.Lock()
         self.speaking = False
         self.last_text = ""
+        self._cache: dict[tuple[str, str], np.ndarray] = {}
 
     # ------------------------------------------------------------------ #
     # Carregamento
@@ -108,10 +118,13 @@ class PiperEngine:
     # ------------------------------------------------------------------ #
     # Síntese
     # ------------------------------------------------------------------ #
-    def _synthesize_piper(self, text: str) -> np.ndarray:
+    def _synthesize_piper(self, text: str, mood: str = "neutral") -> np.ndarray:
         """Sintetiza com piper, lidando com as duas APIs (1.2 e 1.3+)."""
         assert self._voice is not None
         chunks: list[np.ndarray] = []
+        length_mult, noise_mult = MOODS.get(mood, MOODS["neutral"])
+        length_scale = settings.piper_length_scale * length_mult
+        noise_scale = settings.piper_noise_scale * noise_mult
 
         # API nova (piper >= 1.3): iterador de AudioChunk.
         if hasattr(self._voice, "synthesize"):
@@ -121,8 +134,8 @@ class PiperEngine:
                     from piper import SynthesisConfig
 
                     syn_config = SynthesisConfig(
-                        length_scale=settings.piper_length_scale,
-                        noise_scale=settings.piper_noise_scale,
+                        length_scale=length_scale,
+                        noise_scale=noise_scale,
                         noise_w_scale=settings.piper_noise_w,
                     )
                 except Exception:
@@ -158,17 +171,17 @@ class PiperEngine:
         if hasattr(self._voice, "synthesize_stream_raw"):
             for raw in self._voice.synthesize_stream_raw(
                 text,
-                length_scale=settings.piper_length_scale,
-                noise_scale=settings.piper_noise_scale,
+                length_scale=length_scale,
+                noise_scale=noise_scale,
                 noise_w=settings.piper_noise_w,
             ):
                 chunks.append(np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0)
 
         return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
 
-    def synthesize(self, text: str) -> tuple[np.ndarray, int]:
+    def synthesize(self, text: str, mood: str = "neutral") -> tuple[np.ndarray, int]:
         """
-        Sintetiza e processa o texto.
+        Sintetiza e processa o texto (com cache em memória por texto+mood).
 
         Returns:
             `(áudio float32 mono, sample_rate)`. Array vazio se o backend
@@ -177,10 +190,35 @@ class PiperEngine:
         clean = normalize_text(text)
         if not clean or self.backend != "piper":
             return np.zeros(0, dtype=np.float32), self.sample_rate
-        audio = self._synthesize_piper(clean)
+        key = (clean, mood)
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached, self.sample_rate
+        audio = self._synthesize_piper(clean, mood)
         if audio.size == 0:
             return audio, self.sample_rate
-        return self._effects.process(audio, self.sample_rate), self.sample_rate
+        processed = self._effects.process(audio, self.sample_rate)
+        # Só frases curtas vão para o cache (falas de estado se repetem).
+        if len(clean) <= 80:
+            if len(self._cache) >= 256:
+                self._cache.pop(next(iter(self._cache)))
+            self._cache[key] = processed
+        return processed, self.sample_rate
+
+    async def preload(self, phrases: list[str] | tuple[str, ...], mood: str = "neutral") -> int:
+        """Pré-sintetiza frases fixas no boot (ativação sem latência)."""
+        await self.load()
+        if self.backend != "piper":
+            return 0
+        count = 0
+        for phrase in phrases:
+            try:
+                await asyncio.to_thread(self.synthesize, phrase, mood)
+                count += 1
+            except Exception as exc:
+                log.warning("tts.preload_failed", phrase=phrase, error=str(exc))
+        log.info("tts.preloaded", count=count)
+        return count
 
     # ------------------------------------------------------------------ #
     # Reprodução
@@ -226,7 +264,7 @@ class PiperEngine:
             log.error("tts.sapi_failed", error=str(exc))
 
     # ------------------------------------------------------------------ #
-    async def speak(self, text: str) -> float:
+    async def speak(self, text: str, mood: str = "neutral") -> float:
         """
         Fala um texto e aguarda o fim.
 
@@ -244,7 +282,7 @@ class PiperEngine:
             started = time.monotonic()
             try:
                 if self.backend == "piper":
-                    audio, rate = await asyncio.to_thread(self.synthesize, text)
+                    audio, rate = await asyncio.to_thread(self.synthesize, text, mood)
                     if audio.size:
                         await asyncio.to_thread(self._play_blocking, audio, rate)
                 elif self.backend == "sapi":
@@ -271,4 +309,4 @@ class PiperEngine:
             await asyncio.to_thread(self.synthesize, "ok")
 
 
-__all__ = ["PiperEngine", "normalize_text"]
+__all__ = ["MOODS", "PiperEngine", "normalize_text"]

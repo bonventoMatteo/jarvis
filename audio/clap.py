@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import structlog
@@ -254,7 +254,7 @@ class ClapDetector:
 class ClapListener:
     """Task assíncrona que roda o `ClapDetector` sobre o stream do microfone."""
 
-    def __init__(self, bus: EventBus, mic, detector: ClapDetector | None = None) -> None:  # noqa: ANN001
+    def __init__(self, bus: EventBus, mic, detector: ClapDetector | None = None) -> None:
         self.bus = bus
         self.mic = mic
         self.detector = detector or ClapDetector(mic.sample_rate)

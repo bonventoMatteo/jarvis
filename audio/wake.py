@@ -50,6 +50,12 @@ class WakeWordEngine:
             candidate = Path(self.model_name)
             local = candidate if candidate.exists() else MODELS_DIR / "openwakeword" / self.model_name
             if local.suffix and local.exists():
+                # Modelo customizado: ainda precisa dos modelos de features
+                # (melspectrogram + embedding), que vêm junto do download.
+                try:
+                    download_models(["hey_jarvis"])
+                except Exception as exc:
+                    log.debug("wake.feature_download_failed", error=str(exc))
                 wakeword_models = [str(local)]
             else:
                 # Modelo pré-treinado por nome; baixa se ainda não houver.
@@ -108,7 +114,7 @@ class WakeWordEngine:
 class WakeWordListener:
     """Task assíncrona que observa o stream do microfone."""
 
-    def __init__(self, bus: EventBus, mic, engine: WakeWordEngine | None = None) -> None:  # noqa: ANN001
+    def __init__(self, bus: EventBus, mic, engine: WakeWordEngine | None = None) -> None:
         self.bus = bus
         self.mic = mic
         self.engine = engine or WakeWordEngine()

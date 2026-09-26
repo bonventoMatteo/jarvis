@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         extra="ignore",
         case_sensitive=False,
         protected_namespaces=(),
@@ -110,10 +111,10 @@ class Settings(BaseSettings):
     piper_noise_scale: float = Field(default=0.667, ge=0.0)
     piper_noise_w: float = Field(default=0.8, ge=0.0)
     tts_effects: bool = Field(default=True, description="Aplica a cadeia pedalboard na voz.")
-    tts_highpass_hz: float = Field(default=180.0, ge=20.0)
-    tts_reverb_wet: float = Field(default=0.13, ge=0.0, le=1.0)
-    tts_reverb_room: float = Field(default=0.22, ge=0.0, le=1.0)
-    tts_gain_db: float = Field(default=1.5)
+    tts_highpass_hz: float = Field(default=100.0, ge=20.0)
+    tts_reverb_wet: float = Field(default=0.06, ge=0.0, le=1.0)
+    tts_reverb_room: float = Field(default=0.12, ge=0.0, le=1.0)
+    tts_gain_db: float = Field(default=2.0)
     tts_volume: float = Field(default=1.0, gt=0.0, le=2.0)
 
     # --------------------------------- Sons -------------------------------- #
@@ -170,7 +171,9 @@ class Settings(BaseSettings):
 
     @property
     def has_api_key(self) -> bool:
-        return bool(self.anthropic_api_key and self.anthropic_api_key.startswith("sk-"))
+        key = self.anthropic_api_key.strip()
+        # Rejeita o placeholder do .env.example ("sk-ant-...").
+        return key.startswith("sk-") and len(key) > 30 and "..." not in key
 
     def sound(self, name: str) -> Path:
         """Caminho de um efeito sonoro em `assets/`."""

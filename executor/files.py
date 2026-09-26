@@ -222,6 +222,41 @@ def search_files(query: str, root: str = "", max_results: int = 15) -> FileResul
     return FileResult(True, f"{len(hits)} resultado(s) para {query}", hits)
 
 
+def active_explorer_folder() -> Path | None:
+    """
+    Pasta aberta na janela do Explorer em primeiro plano (ou na última
+    janela do Explorer, se nenhuma estiver em foco). Usa o COM do Shell.
+    """
+    if not IS_WINDOWS:
+        return None
+    try:
+        import pythoncom  # type: ignore[import-not-found]
+        import win32com.client
+        import win32gui
+
+        pythoncom.CoInitialize()
+        try:
+            foreground = win32gui.GetForegroundWindow()
+            shell = win32com.client.Dispatch("Shell.Application")
+            fallback: Path | None = None
+            for window in shell.Windows():
+                try:
+                    folder = Path(window.Document.Folder.Self.Path)
+                except Exception:
+                    continue
+                if not folder.exists():
+                    continue
+                if int(window.HWND) == int(foreground):
+                    return folder
+                fallback = folder
+            return fallback
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception as exc:
+        log.debug("files.active_explorer_failed", error=str(exc))
+        return None
+
+
 def list_folder(name: str, max_items: int = 40) -> FileResult:
     """Lista o conteúdo de uma pasta conhecida."""
     path = resolve_folder(name)
@@ -238,6 +273,7 @@ def list_folder(name: str, max_items: int = 40) -> FileResult:
 __all__ = [
     "KNOWN_FOLDERS",
     "FileResult",
+    "active_explorer_folder",
     "create_folder",
     "list_folder",
     "open_folder",

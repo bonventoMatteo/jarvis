@@ -13,10 +13,11 @@ import os
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import structlog
 
@@ -80,7 +81,7 @@ class PCController:
     # pyautogui (import preguiçoso: ele abre conexão com o display)
     # ------------------------------------------------------------------ #
     @property
-    def gui(self):  # noqa: ANN201
+    def gui(self):
         if self._pyautogui is None:
             import pyautogui
 
@@ -193,7 +194,7 @@ class PCController:
     # ------------------------------------------------------------------ #
     # Janelas
     # ------------------------------------------------------------------ #
-    def _find_window(self, title: str):  # noqa: ANN202
+    def _find_window(self, title: str):
         """Procura uma janela visível cujo título contenha `title`."""
         if not IS_WINDOWS:
             return None
@@ -594,6 +595,133 @@ class PCController:
         else:
             result = media_mod.get_brightness()
         return ActionResult(result.ok, result.message, {"value": result.value})
+
+    # ------------------------------------------------------------------ #
+    # Edição (atalhos universais)
+    # ------------------------------------------------------------------ #
+    def edit_action(self, action: str) -> ActionResult:
+        """Atalhos de edição: `undo`, `redo`, `cut`, `select_all`, `save`, `new`, `find`."""
+        mapping: dict[str, tuple[list[str], str]] = {
+            "undo": (["ctrl", "z"], "desfeito"),
+            "redo": (["ctrl", "y"], "refeito"),
+            "cut": (["ctrl", "x"], "recortado"),
+            "select_all": (["ctrl", "a"], "tudo selecionado"),
+            "save": (["ctrl", "s"], "salvo"),
+            "new": (["ctrl", "n"], "novo documento aberto"),
+            "find": (["ctrl", "f"], "busca aberta"),
+            "print": (["ctrl", "p"], "impressão aberta"),
+        }
+        if action not in mapping:
+            return ActionResult.fail(f"ação de edição desconhecida: {action}")
+        keys, label = mapping[action]
+        result = self.send_hotkey(keys)
+        return ActionResult(result.ok, label if result.ok else result.message)
+
+    # ------------------------------------------------------------------ #
+    # Rede, lixeira, exclusão, terminal elevado
+    # ------------------------------------------------------------------ #
+    def wifi(self, enable: bool) -> ActionResult:
+        """
+        Liga/desliga o Wi-Fi.
+
+        Desabilitar a interface exige privilégios de administrador; sem eles
+        o Windows devolve erro e o motivo real é repassado.
+        """
+        if not IS_WINDOWS:
+            return ActionResult.fail("controle de Wi-Fi só está disponível no Windows")
+        interface = self._wifi_interface() or "Wi-Fi"
+        state = "enabled" if enable else "disabled"
+        result = self.run_shell(f'netsh interface set interface name="{interface}" admin={state}')
+        if result.ok:
+            return ActionResult(True, "wi-fi ligado" if enable else "wi-fi desligado")
+        detail = (result.data.get("stdout") or result.data.get("stderr") or "").strip()
+        if "elevation" in detail.lower() or "administrador" in detail.lower() or "requires" in detail.lower():
+            return ActionResult.fail("preciso rodar como administrador para mexer no wi-fi")
+        return ActionResult.fail(f"não consegui alterar o wi-fi: {detail[:120] or result.message}")
+
+    def _wifi_interface(self) -> str | None:
+        """Descobre o nome da interface sem fio (varia com o idioma do Windows)."""
+        result = self.run_shell("netsh wlan show interfaces")
+        for line in (result.data.get("stdout") or "").splitlines():
+            key, _, value = line.partition(":")
+            if key.strip().lower() in {"name", "nome"} and value.strip():
+                return value.strip()
+        return None
+
+    def empty_recycle_bin(self) -> ActionResult:
+        """Esvazia a lixeira de todas as unidades, sem diálogo."""
+        if not IS_WINDOWS:
+            return ActionResult.fail("só disponível no Windows")
+        try:
+            # SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND
+            code = ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 0x1 | 0x2 | 0x4)  # type: ignore[attr-defined]
+            # -2147418113 (E_UNEXPECTED) significa "lixeira já vazia".
+            if code in (0, -2147418113):
+                return ActionResult(True, "lixeira esvaziada")
+            return ActionResult.fail(f"o Windows recusou esvaziar a lixeira (código {code})")
+        except Exception as exc:
+            return ActionResult.fail(f"não consegui esvaziar a lixeira: {exc}")
+
+    def delete_path(self, target: str) -> ActionResult:
+        """
+        Envia um arquivo/pasta para a lixeira (reversível).
+
+        Aceita caminho completo ou nome; se for nome, usa o primeiro
+        resultado da busca de arquivos.
+        """
+        path = Path(os.path.expandvars(os.path.expanduser(target.strip())))
+        if not path.exists():
+            found = files_mod.search_files(target, "", 1)
+            if not found.ok or not found.paths:
+                return ActionResult.fail(f"não encontrei {target}")
+            path = Path(found.paths[0])
+        try:
+            from send2trash import send2trash
+
+            send2trash(str(path))
+            log.info("pc.deleted", path=str(path))
+            return ActionResult(True, f"{path.name} foi para a lixeira", {"path": str(path)})
+        except Exception as exc:
+            return ActionResult.fail(f"não consegui apagar {path.name}: {exc}")
+
+    def find_path(self, target: str) -> ActionResult:
+        """Resolve um nome de arquivo para um caminho (sem alterar nada)."""
+        path = Path(os.path.expandvars(os.path.expanduser(target.strip())))
+        if path.exists():
+            return ActionResult(True, str(path), {"path": str(path)})
+        found = files_mod.search_files(target, "", 1)
+        if not found.ok or not found.paths:
+            return ActionResult.fail(f"não encontrei {target}")
+        return ActionResult(True, found.paths[0], {"path": found.paths[0]})
+
+    def admin_terminal(self, shell: str = "cmd") -> ActionResult:
+        """Abre um terminal elevado (o Windows exibe o UAC)."""
+        if not IS_WINDOWS:
+            return ActionResult.fail("só disponível no Windows")
+        exe = "powershell.exe" if shell == "powershell" else "cmd.exe"
+        try:
+            code = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, None, None, 1)  # type: ignore[attr-defined]
+            if code <= 32:
+                return ActionResult.fail("a elevação foi cancelada ou negada")
+            label = "powershell" if exe.startswith("power") else "prompt"
+            return ActionResult(True, f"{label} de administrador aberto")
+        except Exception as exc:
+            return ActionResult.fail(f"não consegui abrir o terminal elevado: {exc}")
+
+    def open_url(self, url: str) -> ActionResult:
+        """Abre uma URL no navegador padrão do usuário."""
+        import webbrowser
+
+        target = url.strip()
+        if not target:
+            return ActionResult.fail("endereço vazio")
+        if not target.startswith(("http://", "https://")):
+            target = f"https://{target}"
+        try:
+            webbrowser.open(target, new=2)
+            return ActionResult(True, "abrindo no navegador", {"url": target})
+        except Exception as exc:
+            return ActionResult.fail(f"não consegui abrir o navegador: {exc}")
 
     def shutdown_timers(self) -> None:
         """Cancela todos os timers pendentes (usado no encerramento)."""

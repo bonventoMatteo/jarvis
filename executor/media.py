@@ -7,11 +7,43 @@ navegadores e players em geral.
 """
 from __future__ import annotations
 
+import functools
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import ParamSpec, TypeVar
 
 import structlog
 
 log = structlog.get_logger(__name__)
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _com_init() -> None:
+    """Inicializa o COM na thread dedicada (exigido pelo pycaw)."""
+    try:
+        import comtypes
+
+        comtypes.CoInitialize()
+    except Exception as exc:  # pragma: no cover - fora do Windows
+        log.debug("media.com_init_failed", error=str(exc))
+
+
+#: Uma única thread com COM inicializado: a interface de volume é criada e
+#: usada sempre nela (objetos COM não podem trocar de apartment livremente).
+_COM_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="jarvis-com", initializer=_com_init)
+
+
+def _in_com_thread(func: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Executa a função na thread COM e espera o resultado."""
+
+    @functools.wraps(func)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        return _COM_EXECUTOR.submit(func, *args, **kwargs).result(timeout=10)
+
+    return wrapper
 
 
 @dataclass(slots=True)
@@ -29,22 +61,29 @@ class MediaResult:
 _volume_interface = None
 
 
-def _get_volume():  # noqa: ANN202
+def _get_volume():
     """Obtém (e memoiza) a interface `IAudioEndpointVolume` do dispositivo padrão."""
     global _volume_interface
     if _volume_interface is not None:
         return _volume_interface
-    from comtypes import CLSCTX_ALL
     from ctypes import POINTER, cast
 
+    from comtypes import CLSCTX_ALL
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
     speakers = AudioUtilities.GetSpeakers()
+    # pycaw >= 2025 devolve um wrapper `AudioDevice` com `EndpointVolume` pronto;
+    # versões anteriores devolvem o IMMDevice cru, que precisa de Activate().
+    endpoint = getattr(speakers, "EndpointVolume", None)
+    if endpoint is not None:
+        _volume_interface = endpoint
+        return _volume_interface
     interface = speakers.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
     _volume_interface = cast(interface, POINTER(IAudioEndpointVolume))
     return _volume_interface
 
 
+@_in_com_thread
 def get_volume() -> MediaResult:
     """Lê o volume atual do sistema (0–100)."""
     try:
@@ -56,6 +95,7 @@ def get_volume() -> MediaResult:
         return MediaResult(False, f"não consegui ler o volume: {exc}")
 
 
+@_in_com_thread
 def set_volume(percent: float) -> MediaResult:
     """Define o volume do sistema (0–100)."""
     percent = max(0.0, min(100.0, float(percent)))
@@ -78,6 +118,7 @@ def change_volume(delta: float) -> MediaResult:
     return set_volume(current.value + delta)
 
 
+@_in_com_thread
 def set_mute(muted: bool) -> MediaResult:
     """Silencia ou reativa o áudio do sistema."""
     try:
@@ -87,6 +128,7 @@ def set_mute(muted: bool) -> MediaResult:
         return MediaResult(False, f"não consegui alterar o mudo: {exc}")
 
 
+@_in_com_thread
 def toggle_mute() -> MediaResult:
     """Inverte o estado de mudo."""
     try:

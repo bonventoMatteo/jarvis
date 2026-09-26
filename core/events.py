@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, AsyncIterator
+from typing import Any
 
 import structlog
 
@@ -85,9 +86,9 @@ class EventBus:
         return self._loop
 
     # ------------------------------------------------------------------ #
-    def subscribe(self) -> asyncio.Queue[Event]:
+    def subscribe(self, maxsize: int | None = None) -> asyncio.Queue[Event]:
         """Cria uma fila nova já inscrita no barramento."""
-        queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=self._maxsize)
+        queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=maxsize or self._maxsize)
         self._subscribers.append(queue)
         return queue
 

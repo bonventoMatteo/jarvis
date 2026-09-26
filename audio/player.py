@@ -134,7 +134,7 @@ class AudioOutput:
         self._started = False
 
     # ------------------------------------------------------------------ #
-    def _callback(self, outdata, frames, time_info, status) -> None:  # noqa: ANN001
+    def _callback(self, outdata, frames, time_info, status) -> None:
         """Callback de áudio (roda em thread de alta prioridade)."""
         mix = np.zeros(frames, dtype=np.float32)
 

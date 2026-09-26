@@ -1,0 +1,41 @@
+[project]
+name = "jarvis"
+version = "1.0.0"
+description = "JARVIS — assistente de voz cinematográfico para Windows 11 (palmas, wake word, Claude, piper)."
+requires-python = ">=3.11"
+readme = "README.md"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["models", "data", "logs", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "I", "UP", "SIM", "RUF"]
+ignore = [
+    "RUF001",  # caracteres ambíguos: texto em pt-BR usa "–" e aspas tipográficas de propósito
+    "RUF002",
+    "RUF003",
+    "SIM105",  # try/except/pass é mais legível que contextlib.suppress em callbacks de áudio
+    "B008",
+    "UP042",   # (str, Enum) mantém str() == valor, que o dashboard/log usam
+    "SIM112",  # nomes de variáveis de ambiente do Windows (ProgramFiles) são os canônicos
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tabelas de regex e descrições de ferramentas ficam mais legíveis numa linha só.
+"llm/router.py" = ["E501"]
+"llm/tools.py" = ["E501"]
+"tests/*" = ["E501"]
+# Scripts executáveis de dentro da pasta ajustam o sys.path antes do import.
+"jarvis_voice/demo.py" = ["E402"]
+"jarvis_voice/download_voice.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["assets", "audio", "config", "core", "executor", "jarvis_voice", "llm", "memory", "scripts", "stt", "tts", "ui"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

@@ -19,7 +19,7 @@ from config import ASSETS_DIR
 SR = 44100
 """Taxa de amostragem dos assets gerados."""
 
-SOUND_NAMES: tuple[str, ...] = ("boot", "activate", "thinking", "error", "success", "confirm")
+SOUND_NAMES: tuple[str, ...] = ("boot", "activate", "thinking", "error", "success", "confirm", "alarm")
 
 
 # --------------------------------------------------------------------------- #
@@ -183,6 +183,18 @@ def make_confirm() -> np.ndarray:
     return piece * _adsr(piece.size, 0.02, 0.2, 0.5, 0.5)
 
 
+def make_alarm() -> np.ndarray:
+    """Três pulsos ascendentes repetidos duas vezes — timer/alarme disparado."""
+    segments: list[np.ndarray] = []
+    for _ in range(2):
+        for freq in (880.0, 1174.66, 1567.98):
+            piece = _tone(0.14, freq, (1.0, 0.4, 0.15))
+            segments.append(piece * _adsr(piece.size, 0.02, 0.2, 0.7, 0.3))
+            segments.append(np.zeros(int(SR * 0.04)))
+        segments.append(np.zeros(int(SR * 0.25)))
+    return np.concatenate(segments)
+
+
 _GENERATORS = {
     "boot": make_boot,
     "activate": make_activate,
@@ -190,6 +202,7 @@ _GENERATORS = {
     "error": make_error,
     "success": make_success,
     "confirm": make_confirm,
+    "alarm": make_alarm,
 }
 
 

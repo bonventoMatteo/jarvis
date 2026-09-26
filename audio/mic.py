@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections import deque
-from typing import Iterable
+from collections.abc import Iterable
 
 import numpy as np
 import structlog
@@ -128,7 +128,7 @@ class Microphone:
     # ------------------------------------------------------------------ #
     # Callback de áudio
     # ------------------------------------------------------------------ #
-    def _callback(self, indata, frames, time_info, status) -> None:  # noqa: ANN001
+    def _callback(self, indata, frames, time_info, status) -> None:
         if status:  # pragma: no cover - overflow/underflow ocasional
             log.debug("mic.status", status=str(status))
 
@@ -222,7 +222,7 @@ class Microphone:
                 chunk = await asyncio.wait_for(queue.get(), timeout=seconds + 5.0)
                 parts.append(chunk)
                 total += chunk.size
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning("mic.collect_timeout", seconds=seconds)
         finally:
             if own:
