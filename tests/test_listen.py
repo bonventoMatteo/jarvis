@@ -39,7 +39,9 @@ class FakeRecorder:
         if self.left <= 0:
             await asyncio.sleep(3600)
         self.left -= 1
-        return SimpleNamespace(is_usable=True, speech_detected=True, audio=np.zeros(16000, dtype=np.float32))
+        return SimpleNamespace(
+            is_usable=True, speech_detected=True, duration_s=1.0, audio=np.zeros(16000, dtype=np.float32)
+        )
 
 
 class FakeWhisper:
