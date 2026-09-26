@@ -1,0 +1,21 @@
+# Vinhetas de DJ — uma por linha. Troque "MATTEO" pelo seu nome artístico.
+# Reticências viram pausa; ponto de exclamação dá força.
+# Gerar tudo:  .venv/bin/python -m scripts.dj_voice --file scripts/dj_tags.txt -o tags/
+
+# Abertura do set
+Senhoras e senhores... apaguem as luzes... porque agora... quem assume o controle... é o DJ MATTEO!
+
+# Tag curta (para soltar em cima do drop)
+DJ... MATTEO!
+
+# Antes do drop
+Você tá pronto?... Então segura... três... dois... um... SOLTA O GRAVE!
+
+# Assinatura
+Isso aqui não é música... é um terremoto. DJ MATTEO... no comando.
+
+# Chamada da pista
+Levanta a mão quem veio pra sentir o chão tremer!... Essa é pra vocês!
+
+# Encerramento
+A noite ainda não acabou... mas a lenda... já foi escrita. DJ MATTEO... até a próxima.
