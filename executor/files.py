@@ -14,7 +14,7 @@ from pathlib import Path
 
 import structlog
 
-from config import IS_WINDOWS
+from config import IS_LINUX, IS_WINDOWS
 
 log = structlog.get_logger(__name__)
 
@@ -58,17 +58,37 @@ class FileResult:
     content: str = ""
 
 
+#: Nome falado -> tipo XDG (no Ubuntu em pt-BR, ~/Downloads pode ser ~/Transferências).
+_XDG_KINDS: dict[Path, str] = {
+    HOME / "Downloads": "DOWNLOAD",
+    HOME / "Documents": "DOCUMENTS",
+    HOME / "Desktop": "DESKTOP",
+    HOME / "Pictures": "PICTURES",
+    HOME / "Videos": "VIDEOS",
+    HOME / "Music": "MUSIC",
+}
+
+
+def _localized(path: Path) -> Path:
+    """No Linux, troca a pasta padrão em inglês pela pasta XDG real do usuário."""
+    if not IS_LINUX or path.exists() or path not in _XDG_KINDS:
+        return path
+    from executor import linux as linux_mod
+
+    return linux_mod.user_dir(_XDG_KINDS[path]) or path
+
+
 def resolve_folder(name: str) -> Path | None:
     """Traduz o nome falado de uma pasta para um caminho real."""
     key = name.strip().lower().rstrip("/\\")
     if key in KNOWN_FOLDERS:
-        return KNOWN_FOLDERS[key]
+        return _localized(KNOWN_FOLDERS[key])
     candidate = Path(os.path.expandvars(os.path.expanduser(name)))
     if candidate.exists():
         return candidate
     for known, path in KNOWN_FOLDERS.items():
         if key and key in known:
-            return path
+            return _localized(path)
     return None
 
 
@@ -193,6 +213,12 @@ def search_files(query: str, root: str = "", max_results: int = 15) -> FileResul
     if not query:
         return FileResult(False, "termo de busca vazio")
 
+    if not root and IS_LINUX:
+        from executor import linux as linux_mod
+
+        hits = linux_mod.locate(query, max_results)
+        if hits:
+            return FileResult(True, f"{len(hits)} resultado(s) para {query}", hits)
     if not root:
         hits = _search_windows_index(query, max_results)
         if hits:
@@ -222,6 +248,41 @@ def search_files(query: str, root: str = "", max_results: int = 15) -> FileResul
     return FileResult(True, f"{len(hits)} resultado(s) para {query}", hits)
 
 
+def active_explorer_folder() -> Path | None:
+    """
+    Pasta aberta na janela do Explorer em primeiro plano (ou na última
+    janela do Explorer, se nenhuma estiver em foco). Usa o COM do Shell.
+    """
+    if not IS_WINDOWS:
+        return None
+    try:
+        import pythoncom  # type: ignore[import-not-found]
+        import win32com.client
+        import win32gui
+
+        pythoncom.CoInitialize()
+        try:
+            foreground = win32gui.GetForegroundWindow()
+            shell = win32com.client.Dispatch("Shell.Application")
+            fallback: Path | None = None
+            for window in shell.Windows():
+                try:
+                    folder = Path(window.Document.Folder.Self.Path)
+                except Exception:
+                    continue
+                if not folder.exists():
+                    continue
+                if int(window.HWND) == int(foreground):
+                    return folder
+                fallback = folder
+            return fallback
+        finally:
+            pythoncom.CoUninitialize()
+    except Exception as exc:
+        log.debug("files.active_explorer_failed", error=str(exc))
+        return None
+
+
 def list_folder(name: str, max_items: int = 40) -> FileResult:
     """Lista o conteúdo de uma pasta conhecida."""
     path = resolve_folder(name)
@@ -238,6 +299,7 @@ def list_folder(name: str, max_items: int = 40) -> FileResult:
 __all__ = [
     "KNOWN_FOLDERS",
     "FileResult",
+    "active_explorer_folder",
     "create_folder",
     "list_folder",
     "open_folder",

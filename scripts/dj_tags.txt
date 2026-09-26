@@ -1,0 +1,24 @@
+# Vinhetas do MIZA DJ — uma por linha.
+# Reticências viram pausa; ponto de exclamação dá força; caixa alta = ênfase.
+# Gerar tudo:  .venv/bin/python -m scripts.dj_voice --file scripts/dj_tags.txt -o tags/
+
+# Tag curta (solta em cima do drop)
+MIZA... DJ!
+
+# Abertura do set
+Senhoras e senhores... apaguem as luzes... porque agora... quem assume o controle... é o MIZA DJ!
+
+# Antes do drop
+Você tá pronto?... Então segura... três... dois... um... MIZA DJ... SOLTA O GRAVE!
+
+# Assinatura
+Isso aqui não é música... é um terremoto. MIZA DJ... no comando.
+
+# Chamada da pista
+Levanta a mão quem veio pra sentir o chão tremer!... MIZA DJ... essa é pra vocês!
+
+# Marca registrada
+Quando o grave bate... você já sabe quem é... MIZA... DJ!
+
+# Encerramento
+A noite ainda não acabou... mas a lenda... já foi escrita. MIZA DJ... até a próxima.

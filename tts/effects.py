@@ -2,8 +2,9 @@
 Cadeia de efeitos da voz do JARVIS (pedalboard).
 
 O objetivo é tirar o "peso" natural da voz e dar a ela um timbre de
-transmissão: passa-alta sutil, leve realce de agudos, compressão para manter
-a fala sempre presente e um reverb curtíssimo que sugere uma sala metálica.
+transmissão: passa-alta sutil, EQ de presença (2,8 kHz) e brilho (5 kHz),
+compressão para manter a fala sempre presente e um reverb curtíssimo que
+sugere uma sala metálica. É a mesma cadeia do pacote `jarvis_voice`.
 """
 from __future__ import annotations
 
@@ -39,26 +40,37 @@ class VoiceEffects:
                 Compressor,
                 Gain,
                 HighpassFilter,
-                HighShelfFilter,
                 Limiter,
+                LowpassFilter,
+                PeakFilter,
                 Pedalboard,
+                PitchShift,
                 Reverb,
             )
 
             self._board = Pedalboard(
                 [
-                    # 1. Tira o grave da voz — sensação de "rádio"/IA.
+                    # 1. Limpa o grave e o chiado extremo — timbre "transmissão".
+                    # 0. Tom: semitons negativos deixam a voz mais grossa.
+                    *(
+                        [PitchShift(semitones=settings.tts_pitch_semitones)]
+                        if settings.tts_pitch_semitones
+                        else []
+                    ),
                     HighpassFilter(cutoff_frequency_hz=settings.tts_highpass_hz),
-                    # 2. Realça a inteligibilidade nos agudos.
-                    HighShelfFilter(cutoff_frequency_hz=3200.0, gain_db=3.0, q=0.7),
+                    LowpassFilter(cutoff_frequency_hz=8500.0),
+                    # 2. Corpo, presença e brilho: a assinatura "IA de cinema".
+                    PeakFilter(cutoff_frequency_hz=180.0, gain_db=settings.tts_bass_db, q=1.0),
+                    PeakFilter(cutoff_frequency_hz=2800.0, gain_db=2.5, q=1.4),
+                    PeakFilter(cutoff_frequency_hz=5000.0, gain_db=1.0, q=2.0),
                     # 3. Nivela a dinâmica: nenhuma sílaba some.
-                    Compressor(threshold_db=-18.0, ratio=3.2, attack_ms=4.0, release_ms=110.0),
-                    # 4. Sala curta e metálica.
+                    Compressor(threshold_db=-16.0, ratio=3.5, attack_ms=3.0, release_ms=90.0),
+                    # 4. Sala curtíssima e metálica.
                     Reverb(
                         room_size=settings.tts_reverb_room,
-                        damping=0.55,
+                        damping=0.75,
                         wet_level=settings.tts_reverb_wet,
-                        dry_level=1.0 - settings.tts_reverb_wet * 0.5,
+                        dry_level=1.0 - settings.tts_reverb_wet,
                         width=0.9,
                     ),
                     Gain(gain_db=settings.tts_gain_db),

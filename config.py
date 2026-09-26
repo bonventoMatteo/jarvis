@@ -27,6 +27,7 @@ for _directory in (ASSETS_DIR, MODELS_DIR, DATA_DIR, LOGS_DIR):
     _directory.mkdir(parents=True, exist_ok=True)
 
 IS_WINDOWS: bool = sys.platform == "win32"
+IS_LINUX: bool = sys.platform.startswith("linux")
 
 
 class Settings(BaseSettings):
@@ -35,6 +36,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",
         env_file_encoding="utf-8",
+        env_ignore_empty=True,
         extra="ignore",
         case_sensitive=False,
         protected_namespaces=(),
@@ -87,6 +89,7 @@ class Settings(BaseSettings):
     # -------------------------------- Hotkey ------------------------------ #
     hotkey_enabled: bool = Field(default=True)
     hotkey: str = Field(default="ctrl+alt+j")
+    ipc_port: int = Field(default=47831, ge=1024, le=65535, description="Porta local do gatilho externo.")
 
     # ---------------------------------- VAD ------------------------------- #
     vad_threshold: float = Field(default=0.5, gt=0, lt=1)
@@ -103,17 +106,43 @@ class Settings(BaseSettings):
     whisper_compute_type: str = Field(default="auto")
     whisper_beam_size: int = Field(default=1, ge=1, le=10)
     whisper_vad_filter: bool = Field(default=True)
+    whisper_initial_prompt: str = Field(
+        default="Jarvis, abra o Google Chrome. Feche o Spotify. Aumente o volume. Pesquise no Google. Que horas são?",
+        description="Vocabulário que orienta a transcrição (vazio desliga).",
+    )
+    always_listen: bool = Field(
+        default=True, description="Escuta contínua: toda frase vira comando, sem palma/wake word."
+    )
+    always_listen_require_name: bool = Field(
+        default=False, description="Na escuta contínua, só responde se a frase contiver o nome (Jarvis)."
+    )
+    followup_seconds: float = Field(
+        default=6.0, ge=0.0, le=30.0, description="Segundos ouvindo após responder, sem nova palma (0 desliga)."
+    )
 
     # ---------------------------------- TTS ------------------------------- #
+    tts_engine: Literal["edge", "elevenlabs", "piper"] = Field(
+        default="edge", description="Motor de voz principal; o piper é sempre a reserva offline."
+    )
+    edge_voice: str = Field(default="pt-BR-AntonioNeural")
+    edge_rate: str = Field(default="+0%", description="Velocidade do Edge TTS, ex. -5% ou +10%.")
+    edge_pitch: str = Field(default="-4Hz", description="Tom do Edge TTS, ex. -8Hz (mais grave).")
+    elevenlabs_api_key: str = Field(default="")
+    elevenlabs_voice_id: str = Field(default="onwK4e9ZLuTAKqWW03F9", description="Voz (padrão: Daniel, grave).")
+    elevenlabs_model: str = Field(default="eleven_multilingual_v2")
     piper_voice: str = Field(default="pt_BR-faber-medium")
     piper_length_scale: float = Field(default=0.95, gt=0.3, lt=3.0)
     piper_noise_scale: float = Field(default=0.667, ge=0.0)
     piper_noise_w: float = Field(default=0.8, ge=0.0)
     tts_effects: bool = Field(default=True, description="Aplica a cadeia pedalboard na voz.")
-    tts_highpass_hz: float = Field(default=180.0, ge=20.0)
-    tts_reverb_wet: float = Field(default=0.13, ge=0.0, le=1.0)
-    tts_reverb_room: float = Field(default=0.22, ge=0.0, le=1.0)
-    tts_gain_db: float = Field(default=1.5)
+    tts_highpass_hz: float = Field(default=100.0, ge=20.0)
+    tts_pitch_semitones: float = Field(
+        default=0.0, ge=-12.0, le=12.0, description="Tom da voz em semitons (negativo = mais grossa)."
+    )
+    tts_bass_db: float = Field(default=1.5, ge=-12.0, le=12.0, description="Reforço de graves em 180 Hz (dB).")
+    tts_reverb_wet: float = Field(default=0.06, ge=0.0, le=1.0)
+    tts_reverb_room: float = Field(default=0.12, ge=0.0, le=1.0)
+    tts_gain_db: float = Field(default=2.0)
     tts_volume: float = Field(default=1.0, gt=0.0, le=2.0)
 
     # --------------------------------- Sons -------------------------------- #
@@ -170,7 +199,9 @@ class Settings(BaseSettings):
 
     @property
     def has_api_key(self) -> bool:
-        return bool(self.anthropic_api_key and self.anthropic_api_key.startswith("sk-"))
+        key = self.anthropic_api_key.strip()
+        # Rejeita o placeholder do .env.example ("sk-ant-...").
+        return key.startswith("sk-") and len(key) > 30 and "..." not in key
 
     def sound(self, name: str) -> Path:
         """Caminho de um efeito sonoro em `assets/`."""
@@ -189,6 +220,7 @@ __all__ = [
     "ASSETS_DIR",
     "BASE_DIR",
     "DATA_DIR",
+    "IS_LINUX",
     "IS_WINDOWS",
     "LOGS_DIR",
     "MODELS_DIR",

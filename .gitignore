@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Segredos
+.env
+
+# Gerados em runtime
+data/
+logs/
+models/
+assets/*.wav
+jarvis_voice/cache/
+jarvis_voice/models/*.onnx
+jarvis_voice/models/*.onnx.json

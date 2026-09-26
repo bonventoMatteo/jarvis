@@ -12,11 +12,12 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import structlog
 
-from config import MODELS_DIR, settings
+from config import IS_WINDOWS, MODELS_DIR, settings
 
 log = structlog.get_logger(__name__)
 
@@ -40,14 +41,37 @@ class Transcription:
         return not self.text.strip()
 
 
+def _register_cuda_dlls() -> None:
+    """
+    No Windows, as DLLs de CUDA instaladas via pip (`nvidia-cublas-cu12`,
+    `nvidia-cudnn-cu12`) ficam em `site-packages/nvidia/*/bin`, fora do PATH.
+    O ctranslate2 só as encontra se registrarmos esses diretórios.
+    """
+    if not IS_WINDOWS:
+        return
+    import os
+    import site
+
+    roots = [Path(path) for path in site.getsitepackages()]
+    for root in roots:
+        for bin_dir in (root / "nvidia").glob("*/bin"):
+            try:
+                os.add_dll_directory(str(bin_dir))  # type: ignore[attr-defined]
+            except (OSError, AttributeError):
+                continue
+            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+
 def _pick_device() -> tuple[str, str]:
     """Escolhe (device, compute_type) conforme a configuração e o hardware."""
     device = settings.whisper_device
     if device == "auto":
+        # O ctranslate2 é quem roda o faster-whisper: a contagem dele é a que
+        # vale (o torch instalado pelo silero costuma ser a build só-CPU).
         try:
-            import torch
+            import ctranslate2
 
-            device = "cuda" if torch.cuda.is_available() else "cpu"
+            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
         except Exception:
             device = "cpu"
 
@@ -70,6 +94,7 @@ class WhisperEngine:
 
     # ------------------------------------------------------------------ #
     def _load_sync(self) -> None:
+        _register_cuda_dlls()
         from faster_whisper import WhisperModel
 
         self.device, self.compute_type = _pick_device()
@@ -132,6 +157,7 @@ class WhisperEngine:
             vad_filter=settings.whisper_vad_filter,
             vad_parameters={"min_silence_duration_ms": 400},
             condition_on_previous_text=False,
+            initial_prompt=settings.whisper_initial_prompt or None,
             temperature=0.0,
         )
 

@@ -119,7 +119,7 @@ class VoiceActivityDetector:
 class SpeechRecorder:
     """Grava uma fala completa do microfone, parando no silêncio."""
 
-    def __init__(self, bus: EventBus, mic, vad: VoiceActivityDetector | None = None) -> None:  # noqa: ANN001
+    def __init__(self, bus: EventBus, mic, vad: VoiceActivityDetector | None = None) -> None:
         self.bus = bus
         self.mic = mic
         self.vad = vad or VoiceActivityDetector(mic.sample_rate)
@@ -130,7 +130,8 @@ class SpeechRecorder:
     async def record_until_silence(
         self,
         max_seconds: float | None = None,
-        initial_timeout: float = 4.0,
+        initial_timeout: float = 5.0,
+        prespeech: bool = True,
     ) -> Recording:
         """
         Grava até o silêncio final.
@@ -139,6 +140,9 @@ class SpeechRecorder:
             max_seconds: duração máxima absoluta.
             initial_timeout: tempo para o usuário começar a falar antes de
                 desistir.
+            prespeech: inclui os últimos ms do buffer circular (útil quando o
+                usuário fala logo após a palma). Desligue quando o JARVIS
+                acabou de falar, senão o eco da própria voz entra na gravação.
 
         Returns:
             `Recording` com o áudio float32 mono.
@@ -149,7 +153,11 @@ class SpeechRecorder:
         queue = self.mic.subscribe()
         # Padding: pega o que já estava no buffer circular antes da ativação,
         # senão a primeira sílaba se perde.
-        pre = self.mic.read_last(settings.vad_prespeech_ms / 1000.0)
+        pre = (
+            self.mic.read_last(settings.vad_prespeech_ms / 1000.0)
+            if prespeech
+            else np.zeros(0, dtype=np.float32)
+        )
         collected: list[np.ndarray] = [pre] if pre.size else []
 
         pending = np.zeros(0, dtype=np.float32)
@@ -171,7 +179,7 @@ class SpeechRecorder:
 
                 try:
                     chunk = await asyncio.wait_for(queue.get(), timeout=1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
                 collected.append(chunk)

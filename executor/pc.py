@@ -10,19 +10,22 @@ from __future__ import annotations
 
 import ctypes
 import os
+import shlex
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import structlog
 
-from config import IS_WINDOWS, settings
+from config import IS_LINUX, IS_WINDOWS, settings
 from executor import apps as apps_mod
 from executor import files as files_mod
+from executor import linux as linux_mod
 from executor import media as media_mod
 
 log = structlog.get_logger(__name__)
@@ -53,6 +56,12 @@ class ActionResult:
     def fail(cls, reason: str) -> ActionResult:
         return cls(False, reason)
 
+    @classmethod
+    def of(cls, result: tuple[bool, str, dict[str, Any]]) -> ActionResult:
+        """Converte o `(ok, mensagem, dados)` de `executor.linux`."""
+        ok, message, data = result
+        return cls(ok, message, dict(data))
+
 
 @dataclass(slots=True)
 class Timer:
@@ -80,7 +89,7 @@ class PCController:
     # pyautogui (import preguiçoso: ele abre conexão com o display)
     # ------------------------------------------------------------------ #
     @property
-    def gui(self):  # noqa: ANN201
+    def gui(self):
         if self._pyautogui is None:
             import pyautogui
 
@@ -122,6 +131,10 @@ class PCController:
                 return ActionResult(True, "comando enviado com elevação (confirme o UAC)")
             except Exception as exc:
                 return ActionResult.fail(f"falha ao elevar: {exc}")
+
+        if admin and IS_LINUX:
+            # pkexec mostra o diálogo gráfico de senha do polkit.
+            cmd = f"pkexec sh -c {shlex.quote(cmd)}"
 
         try:
             completed = subprocess.run(
@@ -193,7 +206,7 @@ class PCController:
     # ------------------------------------------------------------------ #
     # Janelas
     # ------------------------------------------------------------------ #
-    def _find_window(self, title: str):  # noqa: ANN202
+    def _find_window(self, title: str):
         """Procura uma janela visível cujo título contenha `title`."""
         if not IS_WINDOWS:
             return None
@@ -217,8 +230,10 @@ class PCController:
         Controla uma janela: `minimize`, `maximize`, `close`, `focus`,
         `restore`. Sem `target_title`, age na janela em foco.
         """
+        if IS_LINUX:
+            return ActionResult.of(linux_mod.window_action(action, target_title))
         if not IS_WINDOWS:
-            return ActionResult.fail("controle de janelas só está disponível no Windows")
+            return ActionResult.fail("controle de janelas não suportado neste sistema")
 
         import win32con
         import win32gui
@@ -264,6 +279,11 @@ class PCController:
 
     def list_windows(self, max_items: int = 20) -> ActionResult:
         """Lista os títulos das janelas visíveis."""
+        if IS_LINUX:
+            linux_titles = [title for _wid, title in linux_mod.list_windows()][:max_items]
+            if not linux_titles and not linux_mod.have("wmctrl"):
+                return ActionResult.fail("preciso do wmctrl para listar janelas (sudo apt install wmctrl)")
+            return ActionResult(True, f"{len(linux_titles)} janela(s) aberta(s)", {"windows": linux_titles})
         if not IS_WINDOWS:
             return ActionResult.fail("só disponível no Windows")
         import win32gui
@@ -281,12 +301,17 @@ class PCController:
         return ActionResult(True, f"{len(titles)} janela(s) aberta(s)", {"windows": titles})
 
     def minimize_all(self) -> ActionResult:
-        """Minimiza todas as janelas (Win+M)."""
+        """Minimiza todas as janelas (Win+M / "mostrar área de trabalho" no Linux)."""
+        if IS_LINUX:
+            ok, message, _data = linux_mod.show_desktop()
+            return ActionResult(ok, "minimizei tudo" if ok else message)
         result = self.send_hotkey(["win", "m"])
         return ActionResult(result.ok, "minimizei tudo" if result.ok else result.message)
 
     def show_desktop(self) -> ActionResult:
         """Mostra a área de trabalho (Win+D)."""
+        if IS_LINUX:
+            return ActionResult.of(linux_mod.show_desktop())
         result = self.send_hotkey(["win", "d"])
         return ActionResult(result.ok, "mostrando a área de trabalho" if result.ok else result.message)
 
@@ -310,6 +335,8 @@ class PCController:
     # ------------------------------------------------------------------ #
     def lock(self) -> ActionResult:
         """Bloqueia a estação de trabalho."""
+        if IS_LINUX:
+            return ActionResult.of(linux_mod.lock())
         if not IS_WINDOWS:
             return ActionResult.fail("só disponível no Windows")
         try:
@@ -320,26 +347,37 @@ class PCController:
 
     def sleep(self) -> ActionResult:
         """Suspende o computador."""
+        if IS_LINUX:
+            return ActionResult.of(linux_mod.suspend())
         result = self.run_shell("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
         return ActionResult(result.ok, "suspendendo" if result.ok else result.message)
 
     def shutdown(self, delay_s: int = 5) -> ActionResult:
         """Desliga o computador após `delay_s` segundos."""
+        if IS_LINUX:
+            return ActionResult.of(linux_mod.schedule_power("poweroff", int(delay_s)))
         result = self.run_shell(f"shutdown /s /t {max(0, int(delay_s))}")
         return ActionResult(result.ok, f"desligando em {delay_s} segundos" if result.ok else result.message)
 
     def restart(self, delay_s: int = 5) -> ActionResult:
         """Reinicia o computador após `delay_s` segundos."""
+        if IS_LINUX:
+            return ActionResult.of(linux_mod.schedule_power("reboot", int(delay_s)))
         result = self.run_shell(f"shutdown /r /t {max(0, int(delay_s))}")
         return ActionResult(result.ok, f"reiniciando em {delay_s} segundos" if result.ok else result.message)
 
     def cancel_shutdown(self) -> ActionResult:
         """Cancela um desligamento agendado."""
+        if IS_LINUX:
+            cancelled = linux_mod.cancel_power()
+            return ActionResult(cancelled, "desligamento cancelado" if cancelled else "não havia desligamento agendado")
         result = self.run_shell("shutdown /a")
         return ActionResult(result.ok, "desligamento cancelado" if result.ok else "não havia desligamento agendado")
 
     def task_manager(self) -> ActionResult:
         """Abre o Gerenciador de Tarefas."""
+        if IS_LINUX:
+            return ActionResult.of(linux_mod.task_manager())
         result = self.send_hotkey(["ctrl", "shift", "esc"])
         return ActionResult(result.ok, "gerenciador de tarefas aberto" if result.ok else result.message)
 
@@ -373,7 +411,24 @@ class PCController:
                 {"path": str(target), "width": image.width, "height": image.height},
             )
         except Exception as exc:
+            if IS_LINUX:
+                # Wayland (ou sem scrot): ferramentas de captura do sistema.
+                fallback = linux_mod.screenshot(target, tuple(region) if region else None)
+                if fallback[0]:
+                    return self._with_size(ActionResult.of(fallback))
             return ActionResult.fail(f"não consegui capturar a tela: {exc}")
+
+    @staticmethod
+    def _with_size(result: ActionResult) -> ActionResult:
+        """Acrescenta largura/altura ao resultado de uma captura externa."""
+        try:
+            from PIL import Image
+
+            with Image.open(result.data["path"]) as image:
+                result.data.update(width=image.width, height=image.height)
+        except Exception:  # pragma: no cover - imagem ilegível
+            pass
+        return result
 
     def screen_size(self) -> tuple[int, int]:
         """Resolução da tela principal."""
@@ -385,6 +440,8 @@ class PCController:
 
     def snip(self) -> ActionResult:
         """Abre a ferramenta de recorte (Win+Shift+S)."""
+        if IS_LINUX:
+            return ActionResult.of(linux_mod.snip())
         result = self.send_hotkey(["win", "shift", "s"])
         return ActionResult(result.ok, "recorte de tela aberto" if result.ok else result.message)
 
@@ -594,6 +651,139 @@ class PCController:
         else:
             result = media_mod.get_brightness()
         return ActionResult(result.ok, result.message, {"value": result.value})
+
+    # ------------------------------------------------------------------ #
+    # Edição (atalhos universais)
+    # ------------------------------------------------------------------ #
+    def edit_action(self, action: str) -> ActionResult:
+        """Atalhos de edição: `undo`, `redo`, `cut`, `select_all`, `save`, `new`, `find`."""
+        mapping: dict[str, tuple[list[str], str]] = {
+            "undo": (["ctrl", "z"], "desfeito"),
+            "redo": (["ctrl", "y"], "refeito"),
+            "cut": (["ctrl", "x"], "recortado"),
+            "select_all": (["ctrl", "a"], "tudo selecionado"),
+            "save": (["ctrl", "s"], "salvo"),
+            "new": (["ctrl", "n"], "novo documento aberto"),
+            "find": (["ctrl", "f"], "busca aberta"),
+            "print": (["ctrl", "p"], "impressão aberta"),
+        }
+        if action not in mapping:
+            return ActionResult.fail(f"ação de edição desconhecida: {action}")
+        keys, label = mapping[action]
+        result = self.send_hotkey(keys)
+        return ActionResult(result.ok, label if result.ok else result.message)
+
+    # ------------------------------------------------------------------ #
+    # Rede, lixeira, exclusão, terminal elevado
+    # ------------------------------------------------------------------ #
+    def wifi(self, enable: bool) -> ActionResult:
+        """
+        Liga/desliga o Wi-Fi.
+
+        Desabilitar a interface exige privilégios de administrador; sem eles
+        o Windows devolve erro e o motivo real é repassado.
+        """
+        if IS_LINUX:
+            return ActionResult.of(linux_mod.wifi(enable))
+        if not IS_WINDOWS:
+            return ActionResult.fail("controle de Wi-Fi não suportado neste sistema")
+        interface = self._wifi_interface() or "Wi-Fi"
+        state = "enabled" if enable else "disabled"
+        result = self.run_shell(f'netsh interface set interface name="{interface}" admin={state}')
+        if result.ok:
+            return ActionResult(True, "wi-fi ligado" if enable else "wi-fi desligado")
+        detail = (result.data.get("stdout") or result.data.get("stderr") or "").strip()
+        if "elevation" in detail.lower() or "administrador" in detail.lower() or "requires" in detail.lower():
+            return ActionResult.fail("preciso rodar como administrador para mexer no wi-fi")
+        return ActionResult.fail(f"não consegui alterar o wi-fi: {detail[:120] or result.message}")
+
+    def _wifi_interface(self) -> str | None:
+        """Descobre o nome da interface sem fio (varia com o idioma do Windows)."""
+        result = self.run_shell("netsh wlan show interfaces")
+        for line in (result.data.get("stdout") or "").splitlines():
+            key, _, value = line.partition(":")
+            if key.strip().lower() in {"name", "nome"} and value.strip():
+                return value.strip()
+        return None
+
+    def empty_recycle_bin(self) -> ActionResult:
+        """Esvazia a lixeira de todas as unidades, sem diálogo."""
+        if IS_LINUX:
+            return ActionResult.of(linux_mod.empty_trash())
+        if not IS_WINDOWS:
+            return ActionResult.fail("só disponível no Windows")
+        try:
+            # SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND
+            code = ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 0x1 | 0x2 | 0x4)  # type: ignore[attr-defined]
+            # -2147418113 (E_UNEXPECTED) significa "lixeira já vazia".
+            if code in (0, -2147418113):
+                return ActionResult(True, "lixeira esvaziada")
+            return ActionResult.fail(f"o Windows recusou esvaziar a lixeira (código {code})")
+        except Exception as exc:
+            return ActionResult.fail(f"não consegui esvaziar a lixeira: {exc}")
+
+    def delete_path(self, target: str) -> ActionResult:
+        """
+        Envia um arquivo/pasta para a lixeira (reversível).
+
+        Aceita caminho completo ou nome; se for nome, usa o primeiro
+        resultado da busca de arquivos.
+        """
+        path = Path(os.path.expandvars(os.path.expanduser(target.strip())))
+        if not path.exists():
+            found = files_mod.search_files(target, "", 1)
+            if not found.ok or not found.paths:
+                return ActionResult.fail(f"não encontrei {target}")
+            path = Path(found.paths[0])
+        try:
+            from send2trash import send2trash
+
+            send2trash(str(path))
+            log.info("pc.deleted", path=str(path))
+            return ActionResult(True, f"{path.name} foi para a lixeira", {"path": str(path)})
+        except Exception as exc:
+            return ActionResult.fail(f"não consegui apagar {path.name}: {exc}")
+
+    def find_path(self, target: str) -> ActionResult:
+        """Resolve um nome de arquivo para um caminho (sem alterar nada)."""
+        path = Path(os.path.expandvars(os.path.expanduser(target.strip())))
+        if path.exists():
+            return ActionResult(True, str(path), {"path": str(path)})
+        found = files_mod.search_files(target, "", 1)
+        if not found.ok or not found.paths:
+            return ActionResult.fail(f"não encontrei {target}")
+        return ActionResult(True, found.paths[0], {"path": found.paths[0]})
+
+    def admin_terminal(self, shell: str = "cmd") -> ActionResult:
+        """Abre um terminal elevado (o Windows exibe o UAC; no Linux, `sudo -i`)."""
+        if IS_LINUX:
+            return ActionResult.of(linux_mod.admin_terminal())
+        if not IS_WINDOWS:
+            return ActionResult.fail("só disponível no Windows")
+        exe = "powershell.exe" if shell == "powershell" else "cmd.exe"
+        try:
+            code = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, None, None, 1)  # type: ignore[attr-defined]
+            if code <= 32:
+                return ActionResult.fail("a elevação foi cancelada ou negada")
+            label = "powershell" if exe.startswith("power") else "prompt"
+            return ActionResult(True, f"{label} de administrador aberto")
+        except Exception as exc:
+            return ActionResult.fail(f"não consegui abrir o terminal elevado: {exc}")
+
+    def open_url(self, url: str) -> ActionResult:
+        """Abre uma URL no navegador padrão do usuário."""
+        import webbrowser
+
+        target = url.strip()
+        if not target:
+            return ActionResult.fail("endereço vazio")
+        if not target.startswith(("http://", "https://")):
+            target = f"https://{target}"
+        try:
+            webbrowser.open(target, new=2)
+            return ActionResult(True, "abrindo no navegador", {"url": target})
+        except Exception as exc:
+            return ActionResult.fail(f"não consegui abrir o navegador: {exc}")
 
     def shutdown_timers(self) -> None:
         """Cancela todos os timers pendentes (usado no encerramento)."""

@@ -17,7 +17,8 @@ from pathlib import Path
 
 import structlog
 
-from config import IS_WINDOWS
+from config import IS_LINUX, IS_WINDOWS
+from executor import linux as linux_mod
 
 log = structlog.get_logger(__name__)
 
@@ -159,15 +160,25 @@ def open_app(name_or_path: str) -> AppResult:
         return AppResult(False, "nome do aplicativo vazio")
 
     # Caminho explícito.
-    candidate = Path(raw)
+    candidate = Path(os.path.expanduser(raw))
     if candidate.exists():
         try:
+            if IS_LINUX:
+                opener = [str(candidate)] if os.access(candidate, os.X_OK) and candidate.is_file() else [
+                    "xdg-open", str(candidate)]
+                if not linux_mod.spawn(opener):
+                    raise OSError("xdg-open indisponível")
+                return AppResult(True, f"abri {candidate.name}", str(candidate))
             os.startfile(str(candidate))  # type: ignore[attr-defined]
             return AppResult(True, f"abri {candidate.name}", str(candidate))
         except Exception as exc:
             return AppResult(False, f"não consegui abrir {candidate.name}: {exc}")
 
     canonical = resolve_alias(raw)
+    if IS_LINUX:
+        ok, message, data = linux_mod.open_app(canonical, raw)
+        return AppResult(ok, message, str(data.get("detail", "")))
+
     entry = APP_REGISTRY.get(canonical)
     candidates: tuple[str, ...] = entry[1] if entry else (raw, f"{raw}.exe")
 
@@ -225,6 +236,9 @@ def close_app(name: str, force: bool = False) -> AppResult:
     targets = {proc.lower() for proc in (entry[2] if entry else ())}
     targets.add(f"{canonical.lower()}.exe")
     targets.add(canonical.lower())
+    if IS_LINUX:
+        targets.update(proc.lower() for proc in linux_mod.LINUX_PROCESSES.get(canonical, ()))
+        targets.update(cmd.split()[0].lower() for cmd in linux_mod.LINUX_APPS.get(canonical, ()))
 
     killed = 0
     for process in psutil.process_iter(["name"]):
@@ -249,10 +263,7 @@ def is_running(name: str) -> bool:
     canonical = resolve_alias(name)
     entry = APP_REGISTRY.get(canonical)
     targets = {proc.lower() for proc in (entry[2] if entry else ())} | {f"{canonical}.exe"}
-    for process in psutil.process_iter(["name"]):
-        if (process.info.get("name") or "").lower() in targets:
-            return True
-    return False
+    return any((process.info.get("name") or "").lower() in targets for process in psutil.process_iter(["name"]))
 
 
 def known_apps() -> list[str]:

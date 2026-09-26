@@ -1,0 +1,2 @@
+# Instalar com: pip install --no-deps -r requirements-nodeps.txt
+openwakeword==0.6.0
