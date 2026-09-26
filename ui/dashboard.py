@@ -289,7 +289,7 @@ class Dashboard:
         whisper = orc.whisper
         stt = f"{whisper.model_name} · {whisper.device}/{whisper.compute_type}" if whisper.ready else "carregando…"
         table.add_row("stt", stt)
-        table.add_row("voz", orc.tts.backend)
+        table.add_row("voz", orc.tts.label)
         llm = f"{settings.model_fast} / {settings.model_agent}" if settings.has_api_key else "sem chave da API"
         table.add_row("llm", llm)
         pending = orc.scheduler.pending()

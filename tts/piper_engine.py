@@ -10,6 +10,7 @@ sistema nunca ficar mudo.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import re
 import shutil
 import subprocess
@@ -20,7 +21,8 @@ from pathlib import Path
 import numpy as np
 import structlog
 
-from config import IS_WINDOWS, MODELS_DIR, settings
+from config import DATA_DIR, IS_WINDOWS, MODELS_DIR, settings
+from tts.cloud import cloud_available, synthesize_edge, synthesize_elevenlabs
 from tts.effects import VoiceEffects
 
 log = structlog.get_logger(__name__)
@@ -72,8 +74,25 @@ class PiperEngine:
         self._lock = asyncio.Lock()
         self.speaking = False
         self.last_text = ""
-        self._cache: dict[tuple[str, str], np.ndarray] = {}
+        self._cache: dict[tuple[str, str], tuple[np.ndarray, int]] = {}
         self._fallback_tool = ""
+        # Motor online (edge/elevenlabs) com piper como reserva offline.
+        self.cloud = settings.tts_engine if cloud_available(settings.tts_engine) else ""
+        self._cloud_down_until = 0.0
+        self._disk_cache = DATA_DIR / "tts_cache"
+
+    @property
+    def label(self) -> str:
+        """Descrição do motor ativo para o painel."""
+        if self.cloud and time.monotonic() >= self._cloud_down_until:
+            voice = settings.edge_voice if self.cloud == "edge" else "elevenlabs"
+            return f"{voice} (reserva: {self.backend})"
+        return self.backend
+
+    @property
+    def neural(self) -> bool:
+        """True se há um motor que gera áudio (online ou piper)."""
+        return bool(self.cloud) or self.backend == "piper"
 
     # ------------------------------------------------------------------ #
     # Carregamento
@@ -126,8 +145,9 @@ class PiperEngine:
 
     async def load(self) -> None:
         """Carrega a voz (ou decide pelo fallback)."""
-        if self.backend != "none":
+        if self.backend != "none" or getattr(self, "_loaded", False):
             return
+        self._loaded = True
         await asyncio.to_thread(self._load_sync)
 
     # ------------------------------------------------------------------ #
@@ -194,36 +214,72 @@ class PiperEngine:
 
         return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.float32)
 
+    def _disk_key(self, clean: str, mood: str) -> Path:
+        tag = "|".join(
+            (self.cloud, settings.edge_voice, settings.elevenlabs_voice_id, settings.edge_rate, settings.edge_pitch)
+        )
+        digest = hashlib.md5(f"{tag}|{mood}|{clean}".encode(), usedforsecurity=False).hexdigest()
+        return self._disk_cache / f"{digest}.npz"
+
+    def _synthesize_raw(self, clean: str, mood: str) -> tuple[np.ndarray, int, bool]:
+        """
+        Áudio cru (sem efeitos): motor online primeiro, piper na falha.
+
+        Returns:
+            `(áudio, taxa, veio_do_online)`
+        """
+        if self.cloud and time.monotonic() >= self._cloud_down_until:
+            path = self._disk_key(clean, mood)
+            if path.exists():
+                try:
+                    with np.load(path) as stored:
+                        return stored["audio"], int(stored["rate"]), True
+                except (OSError, ValueError, KeyError):
+                    path.unlink(missing_ok=True)
+            try:
+                audio, rate = (synthesize_edge if self.cloud == "edge" else synthesize_elevenlabs)(clean, mood)
+                if audio.size:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    np.savez(path, audio=audio, rate=rate)
+                    return audio, rate, True
+            except Exception as exc:
+                # Sem internet/serviço fora: usa o piper por 2 minutos antes de tentar de novo.
+                self._cloud_down_until = time.monotonic() + 120.0
+                log.warning("tts.cloud_failed", engine=self.cloud, error=str(exc)[:200], fallback=self.backend)
+        if self.backend == "piper":
+            return self._synthesize_piper(clean, mood), self.sample_rate, False
+        return np.zeros(0, dtype=np.float32), self.sample_rate, False
+
     def synthesize(self, text: str, mood: str = "neutral") -> tuple[np.ndarray, int]:
         """
         Sintetiza e processa o texto (com cache em memória por texto+mood).
 
         Returns:
-            `(áudio float32 mono, sample_rate)`. Array vazio se o backend
-            for SAPI (que fala direto) ou se não houver backend.
+            `(áudio float32 mono, sample_rate)`. Array vazio se só houver
+            SAPI/espeak (que falam direto) ou nenhum backend.
         """
         clean = normalize_text(text)
-        if not clean or self.backend != "piper":
+        if not clean or not self.neural:
             return np.zeros(0, dtype=np.float32), self.sample_rate
         key = (clean, mood)
         cached = self._cache.get(key)
         if cached is not None:
-            return cached, self.sample_rate
-        audio = self._synthesize_piper(clean, mood)
+            return cached
+        audio, rate, _online = self._synthesize_raw(clean, mood)
         if audio.size == 0:
-            return audio, self.sample_rate
-        processed = self._effects.process(audio, self.sample_rate)
-        # Só frases curtas vão para o cache (falas de estado se repetem).
+            return audio, rate
+        processed = self._effects.process(audio, rate)
+        # Só frases curtas vão para o cache em memória (falas de estado se repetem).
         if len(clean) <= 80:
             if len(self._cache) >= 256:
                 self._cache.pop(next(iter(self._cache)))
-            self._cache[key] = processed
-        return processed, self.sample_rate
+            self._cache[key] = (processed, rate)
+        return processed, rate
 
     async def preload(self, phrases: list[str] | tuple[str, ...], mood: str = "neutral") -> int:
         """Pré-sintetiza frases fixas no boot (ativação sem latência)."""
         await self.load()
-        if self.backend != "piper":
+        if not self.neural:
             return 0
         count = 0
         for phrase in phrases:
@@ -307,23 +363,26 @@ class PiperEngine:
             self.last_text = text
             started = time.monotonic()
             try:
-                if self.backend == "piper":
+                audio = np.zeros(0, dtype=np.float32)
+                if self.neural:
                     audio, rate = await asyncio.to_thread(self.synthesize, text, mood)
                     if audio.size:
                         await asyncio.to_thread(self._play_blocking, audio, rate)
-                elif self.backend == "sapi":
-                    await asyncio.to_thread(self._speak_sapi, normalize_text(text))
-                elif self.backend == "espeak":
-                    await asyncio.to_thread(self._speak_espeak, normalize_text(text))
-                else:
-                    log.warning("tts.no_backend", text=text[:80])
+                if audio.size == 0:
+                    # Sem voz neural (ou ela falhou): vozes do sistema.
+                    if self.backend == "sapi":
+                        await asyncio.to_thread(self._speak_sapi, normalize_text(text))
+                    elif self.backend == "espeak":
+                        await asyncio.to_thread(self._speak_espeak, normalize_text(text))
+                    else:
+                        log.warning("tts.no_backend", text=text[:80])
             except Exception as exc:
                 log.error("tts.speak_failed", error=str(exc))
             finally:
                 self.speaking = False
             elapsed = time.monotonic() - started
 
-        log.info("tts.spoke", text=text[:120], seconds=round(elapsed, 2), backend=self.backend)
+        log.info("tts.spoke", text=text[:120], seconds=round(elapsed, 2), engine=self.label)
         return elapsed
 
     def interrupt(self) -> None:

@@ -121,6 +121,15 @@ class Settings(BaseSettings):
     )
 
     # ---------------------------------- TTS ------------------------------- #
+    tts_engine: Literal["edge", "elevenlabs", "piper"] = Field(
+        default="edge", description="Motor de voz principal; o piper é sempre a reserva offline."
+    )
+    edge_voice: str = Field(default="pt-BR-AntonioNeural")
+    edge_rate: str = Field(default="+0%", description="Velocidade do Edge TTS, ex. -5% ou +10%.")
+    edge_pitch: str = Field(default="-4Hz", description="Tom do Edge TTS, ex. -8Hz (mais grave).")
+    elevenlabs_api_key: str = Field(default="")
+    elevenlabs_voice_id: str = Field(default="onwK4e9ZLuTAKqWW03F9", description="Voz (padrão: Daniel, grave).")
+    elevenlabs_model: str = Field(default="eleven_multilingual_v2")
     piper_voice: str = Field(default="pt_BR-faber-medium")
     piper_length_scale: float = Field(default=0.95, gt=0.3, lt=3.0)
     piper_noise_scale: float = Field(default=0.667, ge=0.0)

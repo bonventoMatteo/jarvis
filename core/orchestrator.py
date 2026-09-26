@@ -338,7 +338,7 @@ class Orchestrator:
         if self.wake is not None and self.wake.enabled:
             loaders.append(self.wake.load())
         await asyncio.gather(*loaders, return_exceptions=True)
-        self.bus.emit(EventType.NOTICE, source="tts", text=f"voz: {self.tts.backend}")
+        self.bus.emit(EventType.NOTICE, source="tts", text=f"voz: {self.tts.label}")
 
         # Espera o som de boot respirar antes da primeira fala.
         remaining = 1.6 - (time.monotonic() - boot_started)

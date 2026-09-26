@@ -30,6 +30,7 @@ anthropic==1.8.0
 # ---- TTS ----
 piper-tts==1.8.0
 pedalboard==0.9.25
+edge-tts==7.2.8
 
 # ---- executor ----
 pyautogui==0.9.54
