@@ -324,7 +324,8 @@ class FastCommandExecutor:
         name = (p.get("name") or "Nova pasta").strip()
         parent_name = (p.get("parent") or "").strip()
         if p.get("here") or not parent_name:
-            base = await asyncio.to_thread(self.explorer_folder) or files_mod.HOME / "Desktop"
+            base = await asyncio.to_thread(self.explorer_folder)
+            base = base or files_mod.resolve_folder("desktop") or files_mod.HOME
         else:
             base = files_mod.resolve_folder(parent_name)
             if base is None:

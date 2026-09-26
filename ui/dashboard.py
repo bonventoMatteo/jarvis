@@ -43,6 +43,7 @@ _TRIGGER_LABEL = {
     "HOTKEY": "atalho",
     "text": "texto",
     "schedule": "agenda",
+    "ipc": "externo",
 }
 _ROUTE_STYLE = {"regex": "green", "haiku": "yellow", "agent": "magenta"}
 

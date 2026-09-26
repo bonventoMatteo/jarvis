@@ -27,6 +27,7 @@ for _directory in (ASSETS_DIR, MODELS_DIR, DATA_DIR, LOGS_DIR):
     _directory.mkdir(parents=True, exist_ok=True)
 
 IS_WINDOWS: bool = sys.platform == "win32"
+IS_LINUX: bool = sys.platform.startswith("linux")
 
 
 class Settings(BaseSettings):
@@ -88,6 +89,7 @@ class Settings(BaseSettings):
     # -------------------------------- Hotkey ------------------------------ #
     hotkey_enabled: bool = Field(default=True)
     hotkey: str = Field(default="ctrl+alt+j")
+    ipc_port: int = Field(default=47831, ge=1024, le=65535, description="Porta local do gatilho externo.")
 
     # ---------------------------------- VAD ------------------------------- #
     vad_threshold: float = Field(default=0.5, gt=0, lt=1)
@@ -192,6 +194,7 @@ __all__ = [
     "ASSETS_DIR",
     "BASE_DIR",
     "DATA_DIR",
+    "IS_LINUX",
     "IS_WINDOWS",
     "LOGS_DIR",
     "MODELS_DIR",

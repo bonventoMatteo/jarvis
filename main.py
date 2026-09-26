@@ -18,7 +18,7 @@ import sys
 
 from rich.console import Console
 
-from config import BASE_DIR, IS_WINDOWS, settings
+from config import BASE_DIR, IS_LINUX, IS_WINDOWS, settings
 from core.logging_setup import configure_logging
 
 
@@ -36,6 +36,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mute", action="store_true", help="não fala (só mostra as respostas)")
     parser.add_argument("--list-devices", action="store_true", help="lista os dispositivos de áudio e sai")
     parser.add_argument("--debug", action="store_true", help="log em nível DEBUG")
+    parser.add_argument(
+        "--activate", action="store_true", help="ativa um JARVIS já em execução (use como atalho do sistema)"
+    )
+    parser.add_argument("--send", metavar="COMANDO", help="envia um comando de texto a um JARVIS em execução")
     return parser.parse_args(argv)
 
 
@@ -62,8 +66,17 @@ def _preflight(console: Console, text_mode: bool) -> None:
         console.print(
             "[yellow]Aviso:[/] ANTHROPIC_API_KEY ausente. Comandos rápidos funcionam; tarefas complexas não."
         )
-    if not IS_WINDOWS:
-        console.print("[yellow]Aviso:[/] o executor foi feito para Windows; várias ações vão falhar neste sistema.")
+    if IS_LINUX:
+        from executor import linux
+
+        missing = [tool for tool in ("wmctrl", "xdotool", "pactl", "playerctl", "brightnessctl", "nmcli")
+                   if not linux.have(tool)]
+        if missing:
+            console.print(f"[yellow]Aviso:[/] ferramentas ausentes: {', '.join(missing)} (rode ./install.sh).")
+        if linux.session_type() == "wayland":
+            console.print("[yellow]Aviso:[/] sessão Wayland: controle de janelas limitado; veja o README.")
+    elif not IS_WINDOWS:
+        console.print("[yellow]Aviso:[/] sistema não suportado oficialmente; várias ações vão falhar.")
     if not text_mode:
         piper_model = BASE_DIR / "models" / "piper" / f"{settings.piper_voice}.onnx"
         if not piper_model.exists():
@@ -152,6 +165,15 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.list_devices:
         return _list_devices(console)
+    if args.activate or args.send:
+        from core.ipc import send
+
+        try:
+            reply = send("ACTIVATE" if args.activate else f"TEXT {args.send}")
+        except OSError:
+            console.print("[red]O JARVIS não está em execução (ou IPC_PORT difere).[/]")
+            return 1
+        return 0 if reply.startswith("OK") else 1
 
     use_dashboard = settings.dashboard_enabled and not args.no_dashboard and not args.text
     configure_logging(console=not use_dashboard and not args.text, level="DEBUG" if args.debug else None)

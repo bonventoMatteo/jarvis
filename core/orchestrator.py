@@ -30,6 +30,7 @@ import structlog
 
 from config import settings
 from core.events import ACTIVATION_EVENTS, Event, EventBus, EventType
+from core.ipc import TriggerServer
 from core.scheduler import ScheduledItem, Scheduler
 from core.state import State, StateMachine
 from executor.browser import BrowserController
@@ -97,6 +98,7 @@ class Orchestrator:
         self.pc = PCController()
         self.browser = BrowserController()
         self.scheduler = Scheduler(on_due=self._on_scheduled)
+        self.ipc = TriggerServer(self.bus)
         self.router = Router()
         self.commands = FastCommandExecutor(self.pc, self.scheduler, self.memory)
         self.agent = JarvisAgent(self.bus, self.memory, self.pc)
@@ -334,6 +336,8 @@ class Orchestrator:
             await asyncio.to_thread(self.recorder.load, max(self.noise_floor, 0.005))
             self._start_listeners()
         self.scheduler.start()
+        if await self.ipc.start():
+            self.activation_methods.append("externo")
         self._set(State.IDLE)
         methods = ", ".join(self.activation_methods) or "texto"
         self.bus.emit(EventType.NOTICE, source="boot", text=f"ativação: {methods}")
@@ -384,6 +388,11 @@ class Orchestrator:
         async for event in self.bus.stream(queue):
             if event.type in ACTIVATION_EVENTS:
                 self._on_activation(event)
+            elif event.type is EventType.TRANSCRIPT_REQUEST:
+                if not self.busy:
+                    self._turn_task = asyncio.create_task(
+                        self.process_text(str(event.get("text", "")), "ipc"), name="turn"
+                    )
             elif event.type is EventType.TOOL_CALL:
                 if self.state.state is State.THINKING:
                     self._set(State.EXECUTING)
@@ -683,6 +692,7 @@ class Orchestrator:
         for task in list(self._background):
             task.cancel()
         await self.scheduler.stop()
+        await self.ipc.stop()
         if self.clap is not None:
             await self.clap.stop()
         if self.wake is not None:

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -18,7 +20,7 @@ from pathlib import Path
 import numpy as np
 import structlog
 
-from config import MODELS_DIR, settings
+from config import IS_WINDOWS, MODELS_DIR, settings
 from tts.effects import VoiceEffects
 
 log = structlog.get_logger(__name__)
@@ -71,6 +73,7 @@ class PiperEngine:
         self.speaking = False
         self.last_text = ""
         self._cache: dict[tuple[str, str], np.ndarray] = {}
+        self._fallback_tool = ""
 
     # ------------------------------------------------------------------ #
     # Carregamento
@@ -99,7 +102,19 @@ class PiperEngine:
         except Exception as exc:
             log.warning("tts.piper_unavailable", error=str(exc))
 
-        # Fallback: SAPI do Windows (pywin32).
+        # Fallback Linux: espeak-ng / speech-dispatcher.
+        if not IS_WINDOWS:
+            for tool in ("espeak-ng", "spd-say"):
+                if shutil.which(tool):
+                    self.backend = "espeak"
+                    self._fallback_tool = tool
+                    log.info("tts.loaded", backend=tool)
+                    return
+            self.backend = "none"
+            log.error("tts.unavailable", hint="rode python -m scripts.download_models ou instale espeak-ng")
+            return
+
+        # Fallback Windows: SAPI (pywin32).
         try:
             import win32com.client  # noqa: F401
 
@@ -243,6 +258,17 @@ class PiperEngine:
                     piece = np.pad(piece, (0, block - piece.size))
                 stream.write(piece.reshape(-1, 1))
 
+    def _speak_espeak(self, text: str) -> None:
+        """Fallback Linux: voz sintética do espeak-ng / speech-dispatcher."""
+        if self._fallback_tool == "espeak-ng":
+            cmd = ["espeak-ng", "-v", "pt-br", "-s", "165", text]
+        else:
+            cmd = ["spd-say", "-w", "-l", "pt", text]
+        try:
+            subprocess.run(cmd, check=False, timeout=60, capture_output=True)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log.error("tts.espeak_failed", error=str(exc))
+
     def _speak_sapi(self, text: str) -> None:
         """Fallback: voz nativa do Windows."""
         try:
@@ -287,6 +313,8 @@ class PiperEngine:
                         await asyncio.to_thread(self._play_blocking, audio, rate)
                 elif self.backend == "sapi":
                     await asyncio.to_thread(self._speak_sapi, normalize_text(text))
+                elif self.backend == "espeak":
+                    await asyncio.to_thread(self._speak_espeak, normalize_text(text))
                 else:
                     log.warning("tts.no_backend", text=text[:80])
             except Exception as exc:

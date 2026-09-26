@@ -15,6 +15,9 @@ from typing import ParamSpec, TypeVar
 
 import structlog
 
+from config import IS_LINUX
+from executor import linux as linux_mod
+
 log = structlog.get_logger(__name__)
 
 _P = ParamSpec("_P")
@@ -86,6 +89,11 @@ def _get_volume():
 @_in_com_thread
 def get_volume() -> MediaResult:
     """Lê o volume atual do sistema (0–100)."""
+    if IS_LINUX:
+        level = linux_mod.get_volume()
+        if level is None:
+            return MediaResult(False, "não consegui ler o volume (instale pulseaudio-utils)")
+        return MediaResult(True, f"volume em {round(level)} por cento", level)
     try:
         level = _get_volume().GetMasterVolumeLevelScalar()
         percent = round(level * 100)
@@ -98,6 +106,9 @@ def get_volume() -> MediaResult:
 @_in_com_thread
 def set_volume(percent: float) -> MediaResult:
     """Define o volume do sistema (0–100)."""
+    if IS_LINUX:
+        ok, message, data = linux_mod.set_volume(percent)
+        return MediaResult(ok, message, data.get("value"))
     percent = max(0.0, min(100.0, float(percent)))
     try:
         volume = _get_volume()
@@ -121,6 +132,9 @@ def change_volume(delta: float) -> MediaResult:
 @_in_com_thread
 def set_mute(muted: bool) -> MediaResult:
     """Silencia ou reativa o áudio do sistema."""
+    if IS_LINUX:
+        ok, message, _data = linux_mod.set_mute(muted)
+        return MediaResult(ok, message)
     try:
         _get_volume().SetMute(1 if muted else 0, None)
         return MediaResult(True, "áudio mudo" if muted else "áudio reativado")
@@ -131,6 +145,10 @@ def set_mute(muted: bool) -> MediaResult:
 @_in_com_thread
 def toggle_mute() -> MediaResult:
     """Inverte o estado de mudo."""
+    if IS_LINUX:
+        completed = linux_mod.run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"])
+        ok = completed is not None and completed.returncode == 0
+        return MediaResult(ok, "mudo alternado" if ok else "não consegui alterar o mudo")
     try:
         volume = _get_volume()
         muted = bool(volume.GetMute())
@@ -151,6 +169,9 @@ def _press(key: str) -> None:
 
 def play_pause() -> MediaResult:
     """Alterna play/pause da mídia ativa."""
+    if IS_LINUX:
+        ok, message, _data = linux_mod.media("play-pause")
+        return MediaResult(ok, message)
     try:
         _press("playpause")
         return MediaResult(True, "play/pause")
@@ -160,6 +181,9 @@ def play_pause() -> MediaResult:
 
 def next_track() -> MediaResult:
     """Pula para a próxima faixa."""
+    if IS_LINUX:
+        ok, message, _data = linux_mod.media("next")
+        return MediaResult(ok, message)
     try:
         _press("nexttrack")
         return MediaResult(True, "próxima faixa")
@@ -169,6 +193,9 @@ def next_track() -> MediaResult:
 
 def previous_track() -> MediaResult:
     """Volta para a faixa anterior."""
+    if IS_LINUX:
+        ok, message, _data = linux_mod.media("previous")
+        return MediaResult(ok, message)
     try:
         _press("prevtrack")
         return MediaResult(True, "faixa anterior")
@@ -178,6 +205,9 @@ def previous_track() -> MediaResult:
 
 def stop_media() -> MediaResult:
     """Para a reprodução."""
+    if IS_LINUX:
+        ok, message, _data = linux_mod.media("stop")
+        return MediaResult(ok, message)
     try:
         _press("stop")
         return MediaResult(True, "reprodução parada")
@@ -190,6 +220,10 @@ def stop_media() -> MediaResult:
 # --------------------------------------------------------------------------- #
 def get_brightness() -> MediaResult:
     """Lê o brilho do monitor principal (0–100)."""
+    if IS_LINUX:
+        level = linux_mod.get_brightness()
+        if level is not None:
+            return MediaResult(True, f"brilho em {round(level)} por cento", float(level))
     try:
         import screen_brightness_control as sbc
 
@@ -203,6 +237,9 @@ def get_brightness() -> MediaResult:
 
 def set_brightness(percent: float) -> MediaResult:
     """Define o brilho (0–100). Requer monitor com suporte a DDC/CI ou notebook."""
+    if IS_LINUX and linux_mod.have("brightnessctl"):
+        ok, message, data = linux_mod.set_brightness(percent)
+        return MediaResult(ok, message, data.get("value"))
     percent = max(0.0, min(100.0, float(percent)))
     try:
         import screen_brightness_control as sbc
