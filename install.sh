@@ -46,6 +46,7 @@ step "Ambiente virtual e dependências"
 [ -x .venv/bin/python ] || "$PY" -m venv .venv
 .venv/bin/python -m pip install -q --upgrade pip wheel
 .venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install --no-deps -r requirements-nodeps.txt
 ok "pacotes Python instalados"
 
 if command -v nvidia-smi >/dev/null; then

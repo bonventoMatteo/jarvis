@@ -95,6 +95,7 @@ if (-not (Test-Path $VenvPython)) {
 Write-Step "Instalando dependências (pode levar alguns minutos)"
 Invoke-Checked $VenvPython @("-m", "pip", "install", "--upgrade", "pip", "wheel") "Atualização do pip"
 Invoke-Checked $VenvPython @("-m", "pip", "install", "-r", "requirements.txt") "Instalação do requirements.txt"
+Invoke-Checked $VenvPython @("-m", "pip", "install", "--no-deps", "-r", "requirements-nodeps.txt") "Instalação do openwakeword"
 Write-Ok "pacotes instalados"
 
 # --------------------------------------------------------------------------

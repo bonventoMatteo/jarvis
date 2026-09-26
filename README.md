@@ -93,6 +93,7 @@ O `install.ps1` faz o mesmo que o `install.sh`: venv, dependências, CUDA, `.env
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+pip install --no-deps -r requirements-nodeps.txt
 cp .env.example .env               # e edite a ANTHROPIC_API_KEY
 python -m scripts.download_models
 python -m playwright install chromium
