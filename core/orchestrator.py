@@ -69,6 +69,7 @@ class TurnMetrics:
     stt_ms: int = 0
     route_ms: int = 0
     exec_ms: int = 0
+    ready_ms: int = 0  # até a resposta ficar pronta (sem contar a fala)
 
     @property
     def total_ms(self) -> int:
@@ -441,10 +442,15 @@ class Orchestrator:
     # Turnos
     # ------------------------------------------------------------------ #
     async def _voice_turn(self, event: Event) -> None:
+        """
+        Turno de voz. Depois de responder, continua ouvindo por
+        `followup_seconds` (modo conversa) — sem precisar de nova palma.
+        "Obrigado", "cancela" ou silêncio encerram.
+        """
         trigger = event.type.value
         trace_id = uuid.uuid4().hex[:8]
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
-        metrics = TurnMetrics()
+        first = True
         try:
             assert self.recorder is not None
             if self.clap is not None:
@@ -452,30 +458,47 @@ class Orchestrator:
             if self.wake is not None:
                 self.wake.engine.reset()
 
-            self._set(State.LISTENING, detail=trigger)
-            self.sfx.play("activate")
-            await self.speak(lines.pick(lines.ACKNOWLEDGE), "confirm", restore=State.LISTENING)
+            while not self._stop.is_set():
+                self._set(State.LISTENING, detail=trigger if first else "conversa")
+                if first:
+                    self.sfx.play("activate")
+                    await self.speak(lines.pick(lines.ACKNOWLEDGE), "confirm", restore=State.LISTENING)
+                    recording = await self.recorder.record_until_silence(prespeech=False)
+                else:
+                    self.sfx.play("confirm", gain=settings.sfx_volume * 0.4)
+                    recording = await self.recorder.record_until_silence(
+                        initial_timeout=settings.followup_seconds, prespeech=False
+                    )
 
-            recording = await self.recorder.record_until_silence(prespeech=False)
-            if not recording.speech_detected:
-                self._set(State.IDLE)
-                self.sfx.play("error", gain=settings.sfx_volume * 0.35)
-                return
-            if not recording.is_usable:
-                await self.speak(lines.pick(lines.NOT_UNDERSTOOD))
-                self._set(State.IDLE)
-                return
+                if not recording.speech_detected:
+                    if first:
+                        self.sfx.play("error", gain=settings.sfx_volume * 0.35)
+                    self._set(State.IDLE)
+                    return
+                if not recording.is_usable:
+                    if first:
+                        await self.speak(lines.pick(lines.NOT_UNDERSTOOD))
+                    self._set(State.IDLE)
+                    return
 
-            self._set(State.THINKING)
-            self.sfx.start_ambient("thinking")
-            stt_started = time.monotonic()
-            transcription = await self.whisper.transcribe(recording.audio)
-            metrics.stt_ms = int((time.monotonic() - stt_started) * 1000)
-            if transcription.is_empty:
-                await self.speak(lines.pick(lines.NOT_UNDERSTOOD))
-                self._set(State.IDLE)
-                return
-            await self.process_text(transcription.text, trigger, metrics=metrics, trace_id=trace_id)
+                metrics = TurnMetrics()  # latência conta a partir do fim da sua fala
+                self._set(State.THINKING)
+                self.sfx.start_ambient("thinking")
+                transcription = await self.whisper.transcribe(recording.audio)
+                metrics.stt_ms = int((time.monotonic() - metrics.started) * 1000)
+                if transcription.is_empty:
+                    self.sfx.stop_ambient()
+                    if first:
+                        await self.speak(lines.pick(lines.NOT_UNDERSTOOD))
+                    self._set(State.IDLE)
+                    return
+
+                intent = await self.process_text(
+                    transcription.text, trigger if first else "conversa", metrics=metrics, trace_id=trace_id
+                )
+                if settings.followup_seconds <= 0 or intent in ("cancel", "quit"):
+                    return
+                first = False
         except asyncio.CancelledError:
             self.sfx.stop_ambient()
             raise
@@ -495,8 +518,8 @@ class Orchestrator:
         *,
         metrics: TurnMetrics | None = None,
         trace_id: str | None = None,
-    ) -> None:
-        """Roteia, executa e responde um comando já transcrito."""
+    ) -> str:
+        """Roteia, executa e responde um comando já transcrito. Devolve o nome do intent."""
         metrics = metrics or TurnMetrics()
         own_trace = trace_id is None
         if own_trace:
@@ -530,6 +553,7 @@ class Orchestrator:
                 response = self._agent_reply(agent_result)
                 stop_after = False
             metrics.exec_ms = int((time.monotonic() - exec_started) * 1000)
+            metrics.ready_ms = metrics.total_ms
 
             self.sfx.stop_ambient()
             if response:
@@ -554,7 +578,7 @@ class Orchestrator:
             self.sfx.play("error")
             await self.speak(response, "calm")
         finally:
-            latency = metrics.total_ms
+            latency = metrics.ready_ms or metrics.total_ms
             self.bus.emit(
                 EventType.RESULT,
                 source="orchestrator",
@@ -586,6 +610,7 @@ class Orchestrator:
                 self._set(State.IDLE)
             if own_trace:
                 structlog.contextvars.unbind_contextvars("trace_id")
+        return intent_name
 
     async def _handle_intent(self, intent: Intent) -> tuple[bool, str, bool]:
         """

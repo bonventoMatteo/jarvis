@@ -106,6 +106,13 @@ class Settings(BaseSettings):
     whisper_compute_type: str = Field(default="auto")
     whisper_beam_size: int = Field(default=1, ge=1, le=10)
     whisper_vad_filter: bool = Field(default=True)
+    whisper_initial_prompt: str = Field(
+        default="Jarvis, abra o Google Chrome. Feche o Spotify. Aumente o volume. Pesquise no Google. Que horas são?",
+        description="Vocabulário que orienta a transcrição (vazio desliga).",
+    )
+    followup_seconds: float = Field(
+        default=6.0, ge=0.0, le=30.0, description="Segundos ouvindo após responder, sem nova palma (0 desliga)."
+    )
 
     # ---------------------------------- TTS ------------------------------- #
     piper_voice: str = Field(default="pt_BR-faber-medium")

@@ -16,6 +16,9 @@ router = Router()
         ("Jarvis, abre o Spotify por favor.", "open_app", {"app": "Spotify"}),
         ("inicia o visual studio code", "open_app", {"app": "visual studio code"}),
         ("fecha o Discord", "close_app", {"app": "Discord"}),
+        ("Abro em Google Chrome.", "open_app", {"app": "Google Chrome"}),
+        ("Obrigado, Jarvis.", "cancel", {}),
+        ("valeu", "cancel", {}),
         ("encerrar o word", "close_app", {"app": "word"}),
         # janelas
         ("minimizar tudo", "minimize_all", {}),

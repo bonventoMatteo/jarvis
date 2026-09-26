@@ -157,6 +157,7 @@ class WhisperEngine:
             vad_filter=settings.whisper_vad_filter,
             vad_parameters={"min_silence_duration_ms": 400},
             condition_on_previous_text=False,
+            initial_prompt=settings.whisper_initial_prompt or None,
             temperature=0.0,
         )
 

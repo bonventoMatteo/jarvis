@@ -44,6 +44,7 @@ _TRIGGER_LABEL = {
     "text": "texto",
     "schedule": "agenda",
     "ipc": "externo",
+    "conversa": "conversa",
 }
 _ROUTE_STYLE = {"regex": "green", "haiku": "yellow", "agent": "magenta"}
 

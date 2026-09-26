@@ -130,7 +130,7 @@ def _cmd(
 # Fragmentos reutilizados (sempre sobre texto SEM acento).
 _OPEN = r"(?:abr\w*|abra|inici\w+|execut\w+|lanc\w+|rod\w+|carreg\w+)"
 _CLOSE = r"(?:fech\w+|encerr\w+|mat\w+|finaliz\w+|sai\w* d[oae])"
-_ART = r"(?:(?:o|a|os|as|um|uma|meu|minha)\s+)?"
+_ART = r"(?:(?:o|a|os|as|um|uma|meu|minha|em|no|na)\s+)?"
 _SET = r"(?:coloc\w+|poe|por|ponha|bot\w+|ajust\w+|deix\w+|mud\w+|defin\w+|seta\w*|altera\w*)"
 _UP = r"(?:aument\w+|sob\w+|subir|suba|mais|levant\w+)"
 _DOWN = r"(?:diminu\w+|abaix\w+|baix\w+|reduz\w*|menos)"
@@ -141,7 +141,7 @@ _SEARCH = r"(?:pesquis\w+|busc\w+|procur\w+)"
 #: Ordem importa: padrões específicos antes dos genéricos (abrir/fechar X).
 FAST_COMMANDS: tuple[FastCommand, ...] = (
     # ---------------------------- controle ------------------------------- #
-    _cmd("cancel", r"cancel\w*|esquece|deixa pra la|nada|nao e nada|nao era nada|deixa|ignora"),
+    _cmd("cancel", r"cancel\w*|esquece|deixa pra la|nada|nao e nada|nao era nada|deixa|ignora|obrigad\w*|valeu|(?:e |era )?so isso"),
     _cmd("repeat", r"repet\w+(?: (?:isso|o que (?:voce )?disse))?|o que (?:voce )?disse|nao ouvi"),
     _cmd(
         "quit",
@@ -394,6 +394,10 @@ class Router:
         source = text if len(text) == len(folded) else text.lower()
         original_core = _collapse_like(source[begin:end], folded[begin:end])
         if not core:
+            # A frase era só "obrigado"/"valeu": encerra a conversa.
+            if re.search(r"\b(?:obrigad|valeu)", folded):
+                command = self.get("cancel")
+                return self._build(command, text, {}, "regex") if command else None
             return None
 
         for command in self.commands:
