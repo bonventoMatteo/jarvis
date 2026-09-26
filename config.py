@@ -110,6 +110,12 @@ class Settings(BaseSettings):
         default="Jarvis, abra o Google Chrome. Feche o Spotify. Aumente o volume. Pesquise no Google. Que horas são?",
         description="Vocabulário que orienta a transcrição (vazio desliga).",
     )
+    always_listen: bool = Field(
+        default=True, description="Escuta contínua: toda frase vira comando, sem palma/wake word."
+    )
+    always_listen_require_name: bool = Field(
+        default=False, description="Na escuta contínua, só responde se a frase contiver o nome (Jarvis)."
+    )
     followup_seconds: float = Field(
         default=6.0, ge=0.0, le=30.0, description="Segundos ouvindo após responder, sem nova palma (0 desliga)."
     )

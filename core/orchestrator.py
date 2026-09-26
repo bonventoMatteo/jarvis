@@ -51,6 +51,23 @@ _YES = re.compile(
 _NO = re.compile(r"\b(nao|cancel\w*|negativo|para|pare|espera|nunca|jamais|aborta\w*|no|esquece)\b")
 
 
+#: Frases que o Whisper "ouve" em silêncio ou ruído (alucinações conhecidas em pt).
+_HALLUCINATIONS = re.compile(
+    r"^(?:obrigad[oa]|tchau|legendas? (?:pela|por)|inscreva-se|e ai|ate a proxima|"
+    r"ate mais|musica|aplausos|risos|\W*)[\s.!,]*$|amara\.org|legendado por|transcri(?:cao|to) por"
+)
+
+
+def is_noise_transcript(text: str, avg_logprob: float = 0.0) -> bool:
+    """True para transcrições que quase certamente não são um comando real."""
+    folded = fold(text).strip()
+    if len(folded.replace(" ", "")) < 3:
+        return True
+    if avg_logprob < -1.0:
+        return True
+    return bool(_HALLUCINATIONS.search(folded))
+
+
 def parse_yes_no(text: str) -> bool | None:
     """'sim, pode' -> True; 'não' -> False; ambíguo -> None. 'não' vence."""
     folded = fold(text)
@@ -365,6 +382,9 @@ class Orchestrator:
             self.activation_methods.append("wake word")
         if self.hotkey is not None and self._hotkey_enabled and self.hotkey.start():
             self.activation_methods.append(settings.hotkey)
+        if settings.always_listen and self.recorder is not None:
+            self._spawn(self._listen_loop(), "listen-loop")
+            self.activation_methods.insert(0, "escuta contínua")
 
     # ------------------------------------------------------------------ #
     # Loop principal
@@ -406,6 +426,14 @@ class Orchestrator:
         """Palma, wake word ou hotkey. Interrompe a fala (barge-in) se preciso."""
         if self.state.state in (State.BOOTING, State.CALIBRATING, State.SHUTDOWN):
             return
+        if settings.always_listen and self.mic is not None:
+            # Na escuta contínua a própria frase já é o comando: a palma só
+            # interrompe a fala ou confirma que ele está ouvindo.
+            if self.state.state is State.SPEAKING:
+                self.tts.interrupt()
+            elif not self.busy:
+                self.sfx.play("activate")
+            return
         if self.busy:
             if self.state.state is State.SPEAKING:
                 log.info("activation.barge_in", trigger=event.type.value)
@@ -416,6 +444,60 @@ class Orchestrator:
                 log.info("activation.ignored_busy", trigger=event.type.value, state=self.state.state.value)
                 return
         self._turn_task = asyncio.create_task(self._voice_turn(event), name="turn")
+
+    async def _listen_loop(self) -> None:
+        """
+        Escuta contínua: grava cada frase (silero-vad), transcreve e executa.
+
+        Ignora ruído, alucinações do Whisper e — se configurado — frases sem
+        o nome do assistente. Nunca roda enquanto um turno está em andamento
+        nem enquanto o JARVIS fala (o microfone fica pausado).
+        """
+        assert self.recorder is not None
+        name = fold(settings.assistant_name)
+        while not self._stop.is_set():
+            if self.busy or self.state.state is not State.IDLE:
+                await asyncio.sleep(0.2)
+                continue
+            try:
+                recording = await self.recorder.record_until_silence(initial_timeout=30.0, prespeech=True)
+                if not recording.is_usable or self.busy:
+                    continue
+                metrics = TurnMetrics()
+                transcription = await self.whisper.transcribe(recording.audio)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log.warning("listen.failed", error=str(exc))
+                await asyncio.sleep(1.0)
+                continue
+            metrics.stt_ms = int((time.monotonic() - metrics.started) * 1000)
+
+            text = transcription.text.strip()
+            if not text or is_noise_transcript(text, transcription.avg_logprob):
+                log.debug("listen.ignored_noise", text=text, logprob=round(transcription.avg_logprob, 2))
+                continue
+            if settings.always_listen_require_name and name not in fold(text):
+                log.debug("listen.ignored_no_name", text=text)
+                continue
+            quick = self.router.match(text)
+            if quick is not None and quick.name == "cancel":
+                continue  # "obrigado", "nada"... sem resposta na escuta contínua
+            if self.busy:
+                continue
+
+            structlog.contextvars.bind_contextvars(trace_id=uuid.uuid4().hex[:8])
+            self.sfx.play("activate", gain=settings.sfx_volume * 0.5)
+            self._turn_task = asyncio.create_task(
+                self.process_text(text, "continuo", metrics=metrics), name="turn"
+            )
+            try:
+                await self._turn_task
+            except asyncio.CancelledError:
+                if self._stop.is_set():
+                    raise
+            finally:
+                structlog.contextvars.unbind_contextvars("trace_id")
 
     async def _text_loop(self) -> None:
         """Modo texto: cada linha digitada é um comando."""
