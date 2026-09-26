@@ -474,11 +474,13 @@ class Orchestrator:
             metrics.stt_ms = int((time.monotonic() - metrics.started) * 1000)
 
             text = transcription.text.strip()
+            log.info("listen.heard", text=text, logprob=round(transcription.avg_logprob, 2),
+                     seconds=round(recording.duration_s, 1))
             if not text or is_noise_transcript(text, transcription.avg_logprob):
-                log.debug("listen.ignored_noise", text=text, logprob=round(transcription.avg_logprob, 2))
+                log.info("listen.ignored_noise", text=text, logprob=round(transcription.avg_logprob, 2))
                 continue
             if settings.always_listen_require_name and name not in fold(text):
-                log.debug("listen.ignored_no_name", text=text)
+                log.info("listen.ignored_no_name", text=text)
                 continue
             quick = self.router.match(text)
             if quick is not None and quick.name == "cancel":
