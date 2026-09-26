@@ -1,21 +1,24 @@
-# Vinhetas de DJ — uma por linha. Troque "MATTEO" pelo seu nome artístico.
-# Reticências viram pausa; ponto de exclamação dá força.
+# Vinhetas do MIZA DJ — uma por linha.
+# Reticências viram pausa; ponto de exclamação dá força; caixa alta = ênfase.
 # Gerar tudo:  .venv/bin/python -m scripts.dj_voice --file scripts/dj_tags.txt -o tags/
 
-# Abertura do set
-Senhoras e senhores... apaguem as luzes... porque agora... quem assume o controle... é o DJ MATTEO!
+# Tag curta (solta em cima do drop)
+MIZA... DJ!
 
-# Tag curta (para soltar em cima do drop)
-DJ... MATTEO!
+# Abertura do set
+Senhoras e senhores... apaguem as luzes... porque agora... quem assume o controle... é o MIZA DJ!
 
 # Antes do drop
-Você tá pronto?... Então segura... três... dois... um... SOLTA O GRAVE!
+Você tá pronto?... Então segura... três... dois... um... MIZA DJ... SOLTA O GRAVE!
 
 # Assinatura
-Isso aqui não é música... é um terremoto. DJ MATTEO... no comando.
+Isso aqui não é música... é um terremoto. MIZA DJ... no comando.
 
 # Chamada da pista
-Levanta a mão quem veio pra sentir o chão tremer!... Essa é pra vocês!
+Levanta a mão quem veio pra sentir o chão tremer!... MIZA DJ... essa é pra vocês!
+
+# Marca registrada
+Quando o grave bate... você já sabe quem é... MIZA... DJ!
 
 # Encerramento
-A noite ainda não acabou... mas a lenda... já foi escrita. DJ MATTEO... até a próxima.
+A noite ainda não acabou... mas a lenda... já foi escrita. MIZA DJ... até a próxima.
