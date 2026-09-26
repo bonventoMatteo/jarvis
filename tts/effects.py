@@ -44,16 +44,23 @@ class VoiceEffects:
                 LowpassFilter,
                 PeakFilter,
                 Pedalboard,
+                PitchShift,
                 Reverb,
             )
 
             self._board = Pedalboard(
                 [
                     # 1. Limpa o grave e o chiado extremo — timbre "transmissão".
+                    # 0. Tom: semitons negativos deixam a voz mais grossa.
+                    *(
+                        [PitchShift(semitones=settings.tts_pitch_semitones)]
+                        if settings.tts_pitch_semitones
+                        else []
+                    ),
                     HighpassFilter(cutoff_frequency_hz=settings.tts_highpass_hz),
                     LowpassFilter(cutoff_frequency_hz=8500.0),
                     # 2. Corpo, presença e brilho: a assinatura "IA de cinema".
-                    PeakFilter(cutoff_frequency_hz=180.0, gain_db=1.5, q=1.0),
+                    PeakFilter(cutoff_frequency_hz=180.0, gain_db=settings.tts_bass_db, q=1.0),
                     PeakFilter(cutoff_frequency_hz=2800.0, gain_db=2.5, q=1.4),
                     PeakFilter(cutoff_frequency_hz=5000.0, gain_db=1.0, q=2.0),
                     # 3. Nivela a dinâmica: nenhuma sílaba some.

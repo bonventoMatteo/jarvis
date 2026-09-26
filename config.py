@@ -114,6 +114,10 @@ class Settings(BaseSettings):
     piper_noise_w: float = Field(default=0.8, ge=0.0)
     tts_effects: bool = Field(default=True, description="Aplica a cadeia pedalboard na voz.")
     tts_highpass_hz: float = Field(default=100.0, ge=20.0)
+    tts_pitch_semitones: float = Field(
+        default=0.0, ge=-12.0, le=12.0, description="Tom da voz em semitons (negativo = mais grossa)."
+    )
+    tts_bass_db: float = Field(default=1.5, ge=-12.0, le=12.0, description="Reforço de graves em 180 Hz (dB).")
     tts_reverb_wet: float = Field(default=0.06, ge=0.0, le=1.0)
     tts_reverb_room: float = Field(default=0.12, ge=0.0, le=1.0)
     tts_gain_db: float = Field(default=2.0)
