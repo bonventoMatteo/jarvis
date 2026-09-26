@@ -1,0 +1,1 @@
+"""Pacote memory do JARVIS."""
